@@ -23,7 +23,10 @@ interface HuntedLead {
   state?: string;
   country?: string;
   source?: string;
+  source_url?: string;
   source_url_hint?: string;
+  customer_email?: string;
+  customer_phone?: string;
   posted_ago_hours?: number;
   segment?: "residential" | "commercial";
   priority?: "hot" | "good" | "medium" | "low";
