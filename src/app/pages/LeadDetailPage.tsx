@@ -14,7 +14,7 @@ type Activity = { id: string; action: string; detail: string | null; created_at:
 export default function LeadDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const [lead, setLead] = useState<LeadRow | null>(null);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [loading, setLoading] = useState(true);
@@ -192,10 +192,16 @@ export default function LeadDetailPage() {
             </CardContent>
           </Card>
           <Card>
-            <CardHeader className="pb-2"><CardTitle className="text-base">Contact</CardTitle></CardHeader>
+            <CardHeader className="pb-2"><CardTitle className="text-base">Contact {isAdmin && <Badge variant="outline" className="ml-1 text-[10px]">Admin</Badge>}</CardTitle></CardHeader>
             <CardContent className="space-y-2 text-sm">
-              <Row k="Email" v={lead.customer_email ?? "—"} />
-              <Row k="Phone" v={lead.customer_phone ?? "—"} />
+              {isAdmin ? (
+                <>
+                  <Row k="Email" v={lead.customer_email ? <a className="underline" href={`mailto:${lead.customer_email}`}>{lead.customer_email}</a> : "—"} />
+                  <Row k="Phone" v={lead.customer_phone ? <a className="underline" href={`tel:${lead.customer_phone}`}>{lead.customer_phone}</a> : "—"} />
+                </>
+              ) : (
+                <div className="text-xs text-muted-foreground">Client contact details are visible to admins only.</div>
+              )}
             </CardContent>
           </Card>
         </div>

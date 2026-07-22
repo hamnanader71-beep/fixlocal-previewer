@@ -9,6 +9,7 @@ import SignupPage from "./pages/SignupPage";
 import DashboardPage from "./pages/DashboardPage";
 import LeadsPage from "./pages/LeadsPage";
 import LeadHunterPage from "./pages/LeadHunterPage";
+import ContractorHunterPage from "./pages/ContractorHunterPage";
 import LeadDetailPage from "./pages/LeadDetailPage";
 import NewLeadPage from "./pages/NewLeadPage";
 import OrganizationsPage from "./pages/OrganizationsPage";
@@ -49,6 +50,7 @@ export function AppRouter() {
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/inbox" element={<InboxPage />} />
             <Route path="/hunter" element={<LeadHunterPage />} />
+            <Route path="/hunter/contractors" element={<ContractorHunterPage />} />
             <Route path="/leads" element={<LeadsPage />} />
             <Route path="/leads/new" element={<NewLeadPage />} />
             <Route path="/leads/:id" element={<LeadDetailPage />} />
