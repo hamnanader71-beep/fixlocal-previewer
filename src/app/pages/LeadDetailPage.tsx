@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, CheckCircle2, XCircle, Send, Store, HardHat, Sparkles, Loader2 } from "lucide-react";
+import { ArrowLeft, CheckCircle2, XCircle, Send, Store, HardHat, Sparkles, Loader2, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "../auth/AuthProvider";
 import { relativeTime, type LeadRow } from "../data/types";
