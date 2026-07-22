@@ -74,7 +74,7 @@ export default function LeadHunterPage() {
     category: "",
     city: "",
     state: "",
-    country: "USA",
+    country: "United States",
     radius_km: "",
     platform: "Any",
     budget_min: "",
