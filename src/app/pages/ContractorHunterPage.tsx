@@ -32,7 +32,7 @@ export default function ContractorHunterPage() {
 
   async function load() {
     const [c, cn] = await Promise.all([
-      supabase.from("partners").select("*").eq("partner_type", "contractor").order("created_at", { ascending: false }).limit(50),
+      supabase.from("partners").select("*").contains("tags", ["contractor"]).order("created_at", { ascending: false }).limit(50),
       supabase.from("countries").select("name,code").order("name"),
     ]);
     setSaved((c.data ?? []) as Contractor[]);
@@ -59,7 +59,7 @@ export default function ContractorHunterPage() {
   async function saveContractor(i: number) {
     const p = results[i]; setSavingIdx(i);
     const { error } = await supabase.from("partners").insert({
-      ...p, created_by: user?.id ?? null, status: "prospect", partner_type: "contractor",
+      ...p, created_by: user?.id ?? null, status: "prospect", tags: ["contractor"],
     });
     setSavingIdx(null);
     if (error) return toast.error(error.message);
