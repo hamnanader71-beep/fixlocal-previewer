@@ -103,8 +103,24 @@ export default function LeadDetailPage() {
         <div>
           <div className="text-xs font-mono text-muted-foreground">{lead.lead_code}</div>
           <h1 className="text-2xl font-semibold mt-1">{lead.service}</h1>
-          <div className="text-sm text-muted-foreground mt-1">
-            {lead.customer_name} · {[lead.city, lead.state, lead.country].filter(Boolean).join(", ")} · via {lead.source ?? "—"}
+          <div className="text-sm text-muted-foreground mt-1 flex flex-wrap items-center gap-x-1.5">
+            <span>{lead.customer_name}</span>
+            <span>·</span>
+            <span>{[lead.city, lead.state, lead.country].filter(Boolean).join(", ") || "—"}</span>
+            <span>·</span>
+            <span>via</span>
+            {lead.source_url ? (
+              <a
+                href={lead.source_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-primary hover:underline"
+              >
+                {lead.source ?? "source"} <ExternalLink className="h-3 w-3" />
+              </a>
+            ) : (
+              <span>{lead.source ?? "—"}</span>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
