@@ -219,12 +219,7 @@ export default function LeadHunterPage() {
                   <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {countries.length === 0 ? (
-                      <>
-                        <SelectItem value="USA">United States</SelectItem>
-                        <SelectItem value="Lithuania">Lithuania</SelectItem>
-                        <SelectItem value="Latvia">Latvia</SelectItem>
-                        <SelectItem value="UAE">UAE</SelectItem>
-                      </>
+                      <SelectItem value="United States">United States</SelectItem>
                     ) : countries.map((c) => (
                       <SelectItem key={c.code} value={c.name}>{c.name}</SelectItem>
                     ))}
