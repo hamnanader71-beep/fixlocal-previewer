@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { PageHeader } from "../components/PageHeader";
 import { Button } from "@/components/ui/button";
@@ -58,6 +58,13 @@ export default function LeadHunterPage() {
   const [hunting, setHunting] = useState(false);
   const [results, setResults] = useState<HuntedLead[]>([]);
   const [savingIdx, setSavingIdx] = useState<number | null>(null);
+  const [countries, setCountries] = useState<{ name: string; code: string }[]>([]);
+
+  useEffect(() => {
+    supabase.from("countries").select("name,code").order("name").then(({ data }) => {
+      setCountries((data ?? []) as { name: string; code: string }[]);
+    });
+  }, []);
 
   const [f, setF] = useState({
     keyword: "",
@@ -205,12 +212,16 @@ export default function LeadHunterPage() {
                 <Select value={f.country} onValueChange={(v) => up("country", v)}>
                   <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="USA">United States</SelectItem>
-                    <SelectItem value="Lithuania">Lithuania</SelectItem>
-                    <SelectItem value="UAE">UAE</SelectItem>
-                    <SelectItem value="India">India</SelectItem>
-                    <SelectItem value="Canada">Canada</SelectItem>
-                    <SelectItem value="UK">United Kingdom</SelectItem>
+                    {countries.length === 0 ? (
+                      <>
+                        <SelectItem value="USA">United States</SelectItem>
+                        <SelectItem value="Lithuania">Lithuania</SelectItem>
+                        <SelectItem value="Latvia">Latvia</SelectItem>
+                        <SelectItem value="UAE">UAE</SelectItem>
+                      </>
+                    ) : countries.map((c) => (
+                      <SelectItem key={c.code} value={c.name}>{c.name}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>

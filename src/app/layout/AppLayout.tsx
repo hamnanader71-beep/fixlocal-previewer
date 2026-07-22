@@ -126,6 +126,13 @@ export function AppLayout() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input placeholder="Search leads, contacts, companies, deals…" className="pl-9 h-9 bg-muted/40 border-0" />
           </div>
+          <LanguageSwitcher />
+          <a href="mailto:infogetfixlocal@gmail.com" className="hidden lg:inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground">
+            <Mail className="h-3.5 w-3.5" /> infogetfixlocal@gmail.com
+          </a>
+          <a href="tel:+13129727489" className="hidden lg:inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground">
+            <Phone className="h-3.5 w-3.5" /> +1 (312) 972-7489
+          </a>
           <Button variant="ghost" size="icon" className="h-9 w-9"><Bell className="h-4 w-4" /></Button>
         </header>
         <main className="flex-1 overflow-y-auto">
