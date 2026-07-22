@@ -725,6 +725,7 @@ export type Database = {
           routing: Database["public"]["Enums"]["lead_routing"]
           service: string
           source: string | null
+          source_url: string | null
           state: string | null
           status: Database["public"]["Enums"]["lead_status"]
           suggested_reply: string | null
@@ -760,6 +761,7 @@ export type Database = {
           routing?: Database["public"]["Enums"]["lead_routing"]
           service: string
           source?: string | null
+          source_url?: string | null
           state?: string | null
           status?: Database["public"]["Enums"]["lead_status"]
           suggested_reply?: string | null
@@ -795,6 +797,7 @@ export type Database = {
           routing?: Database["public"]["Enums"]["lead_routing"]
           service?: string
           source?: string | null
+          source_url?: string | null
           state?: string | null
           status?: Database["public"]["Enums"]["lead_status"]
           suggested_reply?: string | null
