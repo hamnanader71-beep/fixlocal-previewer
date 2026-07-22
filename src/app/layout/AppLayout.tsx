@@ -2,8 +2,9 @@ import { Outlet, NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard, Target, Store, HardHat, Building2, Users, UserSquare2, Briefcase, Inbox,
   Globe, Map, MapPin, Wrench, Radio, Settings, ChevronRight, Search, Bell, Sparkles, LogOut, Radar,
-  Handshake, Megaphone, FileText, ListChecks, Plug,
+  Handshake, Megaphone, FileText, ListChecks, Plug, Mail, Phone,
 } from "lucide-react";
+import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -22,6 +23,7 @@ const nav = [
   ]},
   { section: "Growth", items: [
     { to: "/hunter", label: "Lead Hunter", icon: Radar, badge: "AI" },
+    { to: "/hunter/contractors", label: "Contractor Hunter", icon: HardHat, badge: "AI" },
     { to: "/partners", label: "Partner Hunter", icon: Handshake, badge: "AI" },
     { to: "/campaigns", label: "Campaigns", icon: Megaphone, badge: "AI" },
     { to: "/marketplace", label: "Marketplace", icon: Store },
@@ -66,7 +68,7 @@ export function AppLayout() {
           </div>
           <div className="flex flex-col leading-tight">
             <span className="text-sm font-semibold">GetFixLocal</span>
-            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">AI Lead Hunter</span>
+            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">AI OS for Home Services</span>
           </div>
         </div>
         <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-6">
