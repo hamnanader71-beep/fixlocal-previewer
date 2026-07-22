@@ -49,7 +49,7 @@ Return STRICT JSON: { "leads": [ ... ] } with each lead having:
 - category: short service category
 - city, state, country
 - source: platform name (Craigslist, Facebook, Nextdoor, Reddit, Thumbtack, Angi, Google, etc.)
-- source_url_hint: plausible-looking URL pattern (illustrative only)
+- source_url: a plausible full URL on that platform where the post would live (e.g. https://nextdoor.com/p/... or https://www.craigslist.org/...). Always include this — it must be a valid URL string.
 - posted_ago_hours: integer
 - segment: "residential" | "commercial"
 - priority: "hot" | "good" | "medium" | "low"
@@ -61,7 +61,9 @@ Return STRICT JSON: { "leads": [ ... ] } with each lead having:
 - ai_confidence: 0-100
 - suggested_reply: 2-3 sentence outreach message
 - reasoning: 1 sentence why it's a fit
-Do NOT invent phone/email — leave those out. Return ONLY JSON.`;
+- customer_email: include ONLY if the source platform typically exposes it publicly, otherwise omit
+- customer_phone: include ONLY if the source platform typically exposes it publicly, otherwise omit
+Return ONLY JSON.`;
 
     const filters = [
       `Keyword: ${body.keyword}`,

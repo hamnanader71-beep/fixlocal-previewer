@@ -23,7 +23,10 @@ interface HuntedLead {
   state?: string;
   country?: string;
   source?: string;
+  source_url?: string;
   source_url_hint?: string;
+  customer_email?: string;
+  customer_phone?: string;
   posted_ago_hours?: number;
   segment?: "residential" | "commercial";
   priority?: "hot" | "good" | "medium" | "low";
@@ -71,7 +74,7 @@ export default function LeadHunterPage() {
     category: "",
     city: "",
     state: "",
-    country: "USA",
+    country: "United States",
     radius_km: "",
     platform: "Any",
     budget_min: "",
@@ -133,6 +136,9 @@ export default function LeadHunterPage() {
       state: l.state ?? null,
       country: l.country ?? f.country,
       source: l.source ?? "AI Lead Hunter",
+      source_url: l.source_url ?? l.source_url_hint ?? null,
+      customer_email: l.customer_email ?? null,
+      customer_phone: l.customer_phone ?? null,
       created_by: user?.id ?? null,
       ai_score: l.ai_score ?? null,
       ai_confidence: l.ai_confidence ?? null,
@@ -213,12 +219,7 @@ export default function LeadHunterPage() {
                   <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {countries.length === 0 ? (
-                      <>
-                        <SelectItem value="USA">United States</SelectItem>
-                        <SelectItem value="Lithuania">Lithuania</SelectItem>
-                        <SelectItem value="Latvia">Latvia</SelectItem>
-                        <SelectItem value="UAE">UAE</SelectItem>
-                      </>
+                      <SelectItem value="United States">United States</SelectItem>
                     ) : countries.map((c) => (
                       <SelectItem key={c.code} value={c.name}>{c.name}</SelectItem>
                     ))}

@@ -11,6 +11,7 @@ export type LeadRow = {
   state: string | null;
   country: string | null;
   source: string | null;
+  source_url: string | null;
   status: "new" | "qualified" | "review" | "rejected" | "sold" | "assigned";
   priority: "hot" | "good" | "medium" | "low" | null;
   routing: "unassigned" | "internal_crew" | "subcontractor" | "exclusive_sale" | "shared_sale" | "marketplace" | "archived";
