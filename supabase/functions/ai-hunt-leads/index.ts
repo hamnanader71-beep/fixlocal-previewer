@@ -161,7 +161,9 @@ async function firecrawlSearch(query: string, limit: number, lovableKey: string,
   }
 
   const result = await response.json();
-  return Array.isArray(result.data) ? result.data : [];
+  if (Array.isArray(result.data)) return result.data;
+  if (Array.isArray(result.data?.web)) return result.data.web;
+  return [];
 }
 
 function buildSearchQuery(body: Body) {
