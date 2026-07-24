@@ -74,6 +74,12 @@ function normalizeUrl(value: unknown): string | null {
   }
 }
 
+function readNestedString(value: unknown, key: string): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const nested = (value as Record<string, unknown>)[key];
+  return typeof nested === "string" ? nested : undefined;
+}
+
 function isExactPublicPostUrl(rawUrl: string): boolean {
   const normalized = normalizeUrl(rawUrl);
   if (!normalized) return false;
@@ -171,10 +177,10 @@ function collectDocuments(results: unknown[]): SourceDocument[] {
 
   for (const item of results) {
     const row = item as Record<string, unknown>;
-    const rawUrl = normalizeUrl(row.url ?? row.sourceURL ?? row.metadata?.["sourceURL"]);
+    const rawUrl = normalizeUrl(row.url ?? row.sourceURL ?? readNestedString(row.metadata, "sourceURL"));
     if (!rawUrl || seen.has(rawUrl) || !isExactPublicPostUrl(rawUrl)) continue;
     const markdown = typeof row.markdown === "string" ? row.markdown : "";
-    const title = typeof row.title === "string" ? row.title : typeof row.metadata?.["title"] === "string" ? row.metadata["title"] as string : "";
+    const title = typeof row.title === "string" ? row.title : readNestedString(row.metadata, "title") ?? "";
     const description = typeof row.description === "string" ? row.description : "";
     const evidence = `${title}\n${description}\n${markdown}`.trim();
     if (evidence.length < 120) continue;
