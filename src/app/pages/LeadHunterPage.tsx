@@ -302,7 +302,7 @@ export default function LeadHunterPage() {
           <Radar className="h-8 w-8 mx-auto text-muted-foreground mb-3" />
           <div className="text-base font-medium">Ready to hunt</div>
           <p className="text-sm text-muted-foreground mt-1 max-w-md mx-auto">
-            Enter any keyword — a service, industry, or job type — apply filters, and AI will surface realistic prospective leads you can save into your pipeline.
+            Enter any keyword — a service, industry, or job type — apply filters, and AI will surface verified public source pages you can save into your pipeline.
           </p>
         </div>
       )}
