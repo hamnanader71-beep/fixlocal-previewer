@@ -212,8 +212,8 @@ export default function LeadDetailPage() {
             <CardContent className="space-y-2 text-sm">
               {isAdmin ? (
                 <>
-                  <Row k="Email" v={lead.customer_email ? <a className="underline" href={`mailto:${lead.customer_email}`}>{lead.customer_email}</a> : "—"} />
-                  <Row k="Phone" v={lead.customer_phone ? <a className="underline" href={`tel:${lead.customer_phone}`}>{lead.customer_phone}</a> : "—"} />
+                  <Row k="Email" v={lead.customer_email ? <a className="underline" href={`mailto:${lead.customer_email}`}>{lead.customer_email}</a> : "Not Available"} />
+                  <Row k="Phone" v={lead.customer_phone ? <a className="underline" href={`tel:${lead.customer_phone}`}>{lead.customer_phone}</a> : "Not Available"} />
                 </>
               ) : (
                 <div className="text-xs text-muted-foreground">Client contact details are visible to admins only.</div>

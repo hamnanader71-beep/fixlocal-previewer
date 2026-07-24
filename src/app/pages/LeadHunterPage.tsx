@@ -25,6 +25,8 @@ interface HuntedLead {
   source?: string;
   source_url?: string;
   source_url_hint?: string;
+  source_verified?: boolean;
+  contact_verified?: boolean;
   customer_email?: string;
   customer_phone?: string;
   posted_ago_hours?: number;
@@ -60,6 +62,7 @@ export default function LeadHunterPage() {
   const { user } = useAuth();
   const [hunting, setHunting] = useState(false);
   const [results, setResults] = useState<HuntedLead[]>([]);
+  const [huntMessage, setHuntMessage] = useState<string | null>(null);
   const [savingIdx, setSavingIdx] = useState<number | null>(null);
   const [countries, setCountries] = useState<{ name: string; code: string }[]>([]);
 
@@ -94,6 +97,7 @@ export default function LeadHunterPage() {
     if (!f.keyword.trim()) { toast.error("Enter a keyword to hunt for."); return; }
     setHunting(true);
     setResults([]);
+    setHuntMessage(null);
     try {
       const { data, error } = await supabase.functions.invoke("ai-hunt-leads", {
         body: {
@@ -115,7 +119,12 @@ export default function LeadHunterPage() {
       if (error) throw error;
       const leads = (data?.leads ?? []) as HuntedLead[];
       setResults(leads);
-      toast.success(`Found ${leads.length} potential leads for "${f.keyword}"`);
+      setHuntMessage(typeof data?.message === "string" ? data.message : null);
+      if (leads.length === 0) {
+        toast.info(data?.message ?? "No verified public source posts were found.");
+      } else {
+        toast.success(`Found ${leads.length} verified leads for "${f.keyword}"`);
+      }
     } catch (err) {
       console.error(err);
       toast.error((err as Error).message ?? "Lead hunt failed");
@@ -298,9 +307,9 @@ export default function LeadHunterPage() {
       {!hunting && results.length === 0 && (
         <div className="rounded-lg border bg-card p-12 text-center">
           <Radar className="h-8 w-8 mx-auto text-muted-foreground mb-3" />
-          <div className="text-base font-medium">Ready to hunt</div>
+          <div className="text-base font-medium">{huntMessage ? "No verified leads found" : "Ready to hunt"}</div>
           <p className="text-sm text-muted-foreground mt-1 max-w-md mx-auto">
-            Enter any keyword — a service, industry, or job type — apply filters, and AI will surface realistic prospective leads you can save into your pipeline.
+            {huntMessage ?? "Enter any keyword — a service, industry, or job type — apply filters, and AI will surface verified public source pages you can save into your pipeline."}
           </p>
         </div>
       )}
@@ -351,9 +360,27 @@ export default function LeadHunterPage() {
                       <span className="inline-flex items-center gap-1"><DollarSign className="h-3 w-3" />${Number(l.estimated_value_low).toLocaleString()}–${Number(l.estimated_value_high ?? 0).toLocaleString()}</span>
                     )}
                     {l.source && (
-                      <span className="inline-flex items-center gap-1"><ExternalLink className="h-3 w-3" />{l.source}</span>
+                      l.source_url ? (
+                        <a
+                          href={l.source_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-primary hover:underline"
+                        >
+                          <ExternalLink className="h-3 w-3" />{l.source}
+                        </a>
+                      ) : (
+                        <span className="inline-flex items-center gap-1"><ExternalLink className="h-3 w-3" />{l.source}</span>
+                      )
                     )}
                     {l.category && <Badge variant="outline" className="text-[10px]">{l.category}</Badge>}
+                    {l.source_verified && <Badge variant="secondary" className="text-[10px]">Source verified</Badge>}
+                  </div>
+
+                  <div className="flex flex-wrap gap-2 mb-3 text-xs text-muted-foreground">
+                    <span>Email: {l.customer_email || "Not Available"}</span>
+                    <span>Phone: {l.customer_phone || "Not Available"}</span>
+                    {!l.contact_verified && <Badge variant="outline" className="text-[10px]">No public contact found</Badge>}
                   </div>
 
                   {l.suggested_reply && (
