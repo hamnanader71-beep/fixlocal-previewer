@@ -25,6 +25,8 @@ interface HuntedLead {
   source?: string;
   source_url?: string;
   source_url_hint?: string;
+  source_verified?: boolean;
+  contact_verified?: boolean;
   customer_email?: string;
   customer_phone?: string;
   posted_ago_hours?: number;
@@ -351,9 +353,27 @@ export default function LeadHunterPage() {
                       <span className="inline-flex items-center gap-1"><DollarSign className="h-3 w-3" />${Number(l.estimated_value_low).toLocaleString()}–${Number(l.estimated_value_high ?? 0).toLocaleString()}</span>
                     )}
                     {l.source && (
-                      <span className="inline-flex items-center gap-1"><ExternalLink className="h-3 w-3" />{l.source}</span>
+                      l.source_url ? (
+                        <a
+                          href={l.source_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-primary hover:underline"
+                        >
+                          <ExternalLink className="h-3 w-3" />{l.source}
+                        </a>
+                      ) : (
+                        <span className="inline-flex items-center gap-1"><ExternalLink className="h-3 w-3" />{l.source}</span>
+                      )
                     )}
                     {l.category && <Badge variant="outline" className="text-[10px]">{l.category}</Badge>}
+                    {l.source_verified && <Badge variant="secondary" className="text-[10px]">Source verified</Badge>}
+                  </div>
+
+                  <div className="flex flex-wrap gap-2 mb-3 text-xs text-muted-foreground">
+                    <span>Email: {l.customer_email || "Not Available"}</span>
+                    <span>Phone: {l.customer_phone || "Not Available"}</span>
+                    {!l.contact_verified && <Badge variant="outline" className="text-[10px]">No public contact found</Badge>}
                   </div>
 
                   {l.suggested_reply && (
