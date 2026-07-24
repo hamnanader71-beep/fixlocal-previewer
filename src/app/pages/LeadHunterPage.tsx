@@ -62,6 +62,7 @@ export default function LeadHunterPage() {
   const { user } = useAuth();
   const [hunting, setHunting] = useState(false);
   const [results, setResults] = useState<HuntedLead[]>([]);
+  const [huntMessage, setHuntMessage] = useState<string | null>(null);
   const [savingIdx, setSavingIdx] = useState<number | null>(null);
   const [countries, setCountries] = useState<{ name: string; code: string }[]>([]);
 
@@ -96,6 +97,7 @@ export default function LeadHunterPage() {
     if (!f.keyword.trim()) { toast.error("Enter a keyword to hunt for."); return; }
     setHunting(true);
     setResults([]);
+    setHuntMessage(null);
     try {
       const { data, error } = await supabase.functions.invoke("ai-hunt-leads", {
         body: {
@@ -117,7 +119,12 @@ export default function LeadHunterPage() {
       if (error) throw error;
       const leads = (data?.leads ?? []) as HuntedLead[];
       setResults(leads);
-      toast.success(`Found ${leads.length} potential leads for "${f.keyword}"`);
+      setHuntMessage(typeof data?.message === "string" ? data.message : null);
+      if (leads.length === 0) {
+        toast.info(data?.message ?? "No verified public source posts were found.");
+      } else {
+        toast.success(`Found ${leads.length} verified leads for "${f.keyword}"`);
+      }
     } catch (err) {
       console.error(err);
       toast.error((err as Error).message ?? "Lead hunt failed");
@@ -300,9 +307,9 @@ export default function LeadHunterPage() {
       {!hunting && results.length === 0 && (
         <div className="rounded-lg border bg-card p-12 text-center">
           <Radar className="h-8 w-8 mx-auto text-muted-foreground mb-3" />
-          <div className="text-base font-medium">Ready to hunt</div>
+          <div className="text-base font-medium">{huntMessage ? "No verified leads found" : "Ready to hunt"}</div>
           <p className="text-sm text-muted-foreground mt-1 max-w-md mx-auto">
-            Enter any keyword — a service, industry, or job type — apply filters, and AI will surface verified public source pages you can save into your pipeline.
+            {huntMessage ?? "Enter any keyword — a service, industry, or job type — apply filters, and AI will surface verified public source pages you can save into your pipeline."}
           </p>
         </div>
       )}
