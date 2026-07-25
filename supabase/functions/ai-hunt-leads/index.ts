@@ -55,6 +55,24 @@ const unreliableSourceHosts = [
   "nextdoor.co.uk",
 ];
 
+const buyerIntentPatterns = [
+  /\b(i|we|my|our)\s+(need|needs|needed|want|wanted|looking for|look for|seeking|hiring|hire)\b/i,
+  /\b(need|needed|looking for|seeking|iso|in search of|recommendations? for|anyone know|can anyone recommend|can someone|who can|help needed|quote needed|estimate needed|repair needed|urgent help)\b/i,
+  /\b(need someone|looking to hire|trying to find|does anyone have|does anyone know|please recommend|need a quote|need an estimate)\b/i,
+];
+
+const providerOfferPatterns = [
+  /\b(we|we're|we are|i|i'm|i am|our team|our company)\s+(offer|provide|specialize|serve|install|repair|handle|do|can help|are available)\b/i,
+  /\b(licensed and insured|licensed & insured|free estimates?|call us|call now|book now|schedule service|schedule today|contact us|visit our website|get a quote|request a quote)\b/i,
+  /\b(proudly serving|serving the|service area|years of experience|family owned|locally owned|professional services?|quality service|affordable rates?)\b/i,
+  /\b(services include|our services|residential and commercial|commercial and residential|available 24\/?7|emergency services?)\b/i,
+  /\b(for sale|selling|promotion|discount|deal|limited time offer)\b/i,
+];
+
+const directoryOrProviderTitlePatterns = [
+  /\b(best|top|near me|services?|company|companies|contractors?|pros?|professionals?)\b/i,
+];
+
 function jsonResponse(payload: unknown, status = 200) {
   return new Response(JSON.stringify(payload), {
     status,
@@ -140,6 +158,33 @@ function extractPhones(text: string): string[] {
   return [...new Set(matches.filter(validPhone).map(formatPhone))].slice(0, 2);
 }
 
+function countMatches(text: string, patterns: RegExp[]) {
+  return patterns.reduce((count, pattern) => count + (pattern.test(text) ? 1 : 0), 0);
+}
+
+function serviceMatches(text: string, body: Body): boolean {
+  const terms = [body.keyword, body.category]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 1)
+    .map((value) => value.trim().toLowerCase());
+  if (terms.length === 0) return true;
+  return terms.some((term) => text.includes(term));
+}
+
+function hasBuyerRequestEvidence(text: string, body: Body): boolean {
+  const normalized = text.toLowerCase();
+  if (!serviceMatches(normalized, body)) return false;
+
+  const buyerScore = countMatches(normalized, buyerIntentPatterns);
+  const providerScore = countMatches(normalized, providerOfferPatterns);
+  const title = normalized.split("\n")[0] ?? "";
+  const titleLooksLikeProvider = directoryOrProviderTitlePatterns.some((pattern) => pattern.test(title));
+
+  if (buyerScore < 1) return false;
+  if (providerScore >= buyerScore) return false;
+  if (titleLooksLikeProvider && providerScore > 0) return false;
+  return true;
+}
+
 async function firecrawlSearch(query: string, limit: number, lovableKey: string, firecrawlKey: string) {
   const response = await fetch("https://connector-gateway.lovable.dev/firecrawl/v2/search", {
     method: "POST",
@@ -170,10 +215,11 @@ function buildSearchQuery(body: Body) {
   const location = [body.city, body.state, body.country].filter(Boolean).join(" ");
   const platform = body.platform ? `${body.platform} ` : "";
   const category = body.category ? `${body.category} ` : "";
-  return `${platform}${category}${body.keyword} service request customer needs help ${location} phone OR email`.trim();
+  const service = `${category}${body.keyword}`.trim();
+  return `${platform}("need ${service}" OR "looking for ${service}" OR "ISO ${service}" OR "${service} needed" OR "hire ${service}" OR "recommend ${service}") ${location} phone OR email -"free estimate" -"licensed and insured" -"call us" -"our services"`.trim();
 }
 
-function collectDocuments(results: unknown[]): SourceDocument[] {
+function collectDocuments(results: unknown[], body: Body): SourceDocument[] {
   const docs: SourceDocument[] = [];
   const seen = new Set<string>();
 
@@ -186,6 +232,13 @@ function collectDocuments(results: unknown[]): SourceDocument[] {
     const description = typeof row.description === "string" ? row.description : "";
     const evidence = `${title}\n${description}\n${markdown}`.trim();
     if (evidence.length < 120) continue;
+    if (!hasBuyerRequestEvidence(evidence, body)) continue;
+
+    const contacts = {
+      emails: extractEmails(evidence),
+      phones: extractPhones(evidence),
+    };
+    if (contacts.emails.length === 0 && contacts.phones.length === 0) continue;
 
     seen.add(rawUrl);
     docs.push({
@@ -194,10 +247,7 @@ function collectDocuments(results: unknown[]): SourceDocument[] {
       description,
       markdown: evidence.slice(0, 6000),
       source: sourceName(rawUrl),
-      contacts: {
-        emails: extractEmails(evidence),
-        phones: extractPhones(evidence),
-      },
+      contacts,
     });
   }
 
@@ -207,12 +257,15 @@ function collectDocuments(results: unknown[]): SourceDocument[] {
 function sanitizeLead(lead: Record<string, unknown>, doc: SourceDocument, body: Body) {
   const sourceUrl = normalizeUrl(doc.url);
   if (!sourceUrl || !isExactPublicPostUrl(sourceUrl)) return null;
+  const evidence = `${doc.title}\n${doc.description}\n${doc.markdown}`;
+  if (!hasBuyerRequestEvidence(evidence, body)) return null;
   const email = typeof lead.customer_email === "string" && doc.contacts.emails.includes(lead.customer_email.toLowerCase())
     ? lead.customer_email.toLowerCase()
     : doc.contacts.emails[0] ?? null;
   const phone = typeof lead.customer_phone === "string" && doc.contacts.phones.includes(formatPhone(lead.customer_phone))
     ? formatPhone(lead.customer_phone)
     : doc.contacts.phones[0] ?? null;
+  if (!email && !phone) return null;
 
   return {
     customer_name: typeof lead.customer_name === "string" && lead.customer_name.trim() ? lead.customer_name.trim() : "Source contact",
@@ -256,22 +309,25 @@ Deno.serve(async (req) => {
     if (!firecrawlKey) throw new Error("FIRECRAWL_API_KEY not configured");
 
     const limit = Math.min(Math.max(body.limit ?? 8, 3), 15);
-    const searchRows = await firecrawlSearch(buildSearchQuery(body), Math.max(limit * 4, 12), apiKey, firecrawlKey);
-    const documents = collectDocuments(searchRows).slice(0, limit);
+    const searchRows = await firecrawlSearch(buildSearchQuery(body), Math.max(limit * 5, 15), apiKey, firecrawlKey);
+    const documents = collectDocuments(searchRows, body).slice(0, limit);
 
     if (documents.length === 0) {
       return jsonResponse({
         leads: [],
         filters: body,
-        message: "No verified public source posts were found. Try a broader keyword, city, or platform.",
+        message: "No buyer-request posts with verified contact information were found. Provider ads and seller posts were filtered out.",
       });
     }
 
     const system = `You are the Lead Hunter for GetFixLocal, a home & commercial services lead marketplace.
 You will receive scraped public source pages. Create one lead per source page using ONLY facts visible in that page.
+Only include posts from people who need, request, or want to hire a service provider.
+Reject posts from service providers, crews, companies, contractors, directories, ads, promotions, or anyone selling their services.
 Do not invent source URLs, names, emails, phone numbers, dates, budgets, or platform details.
 The source_url must exactly match the provided document URL.
 customer_email and customer_phone must be copied only from the provided verified_contacts arrays. If unavailable, return null.
+If the page does not clearly show buyer intent, return no lead for that page.
 Return STRICT JSON: { "leads": [ ... ] } with each lead having:
 - doc_url: exact source URL from the input document
 - customer_name: visible requester/company name if present, otherwise "Source contact"
