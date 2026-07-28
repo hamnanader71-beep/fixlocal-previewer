@@ -137,6 +137,17 @@ export default function LeadDetailPage() {
             <CardHeader className="pb-2"><CardTitle className="text-base">Original request</CardTitle></CardHeader>
             <CardContent>
               <p className="text-sm leading-relaxed whitespace-pre-wrap">{lead.description || <span className="text-muted-foreground">No description</span>}</p>
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                {lead.source_url ? (
+                  <Button variant="outline" size="sm" asChild>
+                    <a href={lead.source_url} target="_blank" rel="noopener noreferrer">
+                      <ExternalLink className="h-4 w-4 mr-1.5" /> Open source
+                    </a>
+                  </Button>
+                ) : (
+                  <Badge variant="outline">Source link: Not Available</Badge>
+                )}
+              </div>
               <div className="mt-4 flex flex-wrap gap-2">
                 {lead.category && <Badge variant="outline">{lead.category}</Badge>}
                 {lead.urgency && <Badge variant="outline">Urgency: {lead.urgency}</Badge>}

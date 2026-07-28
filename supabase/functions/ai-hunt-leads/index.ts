@@ -45,14 +45,10 @@ const blockedEmailDomains = new Set([
   "domain.com",
 ]);
 
-const unreliableSourceHosts = [
+const blockedSourceHosts = [
   "google.",
   "g.page",
   "maps.google",
-  "facebook.com",
-  "fb.com",
-  "nextdoor.com",
-  "nextdoor.co.uk",
 ];
 
 const buyerIntentPatterns = [
@@ -71,6 +67,14 @@ const providerOfferPatterns = [
 
 const directoryOrProviderTitlePatterns = [
   /\b(best|top|near me|services?|company|companies|contractors?|pros?|professionals?)\b/i,
+];
+
+const providerContactContextPatterns = [
+  /\b(call us|contact us|book now|schedule|free estimates?|licensed|insured|our team|our company|we offer|we provide|services include)\b/i,
+];
+
+const unavailablePagePatterns = [
+  /\b(this content isn't available|content is not available|page not found|404|not found|login to continue|log in to continue)\b/i,
 ];
 
 function jsonResponse(payload: unknown, status = 200) {
@@ -105,9 +109,15 @@ function isExactPublicPostUrl(rawUrl: string): boolean {
   const host = url.hostname.toLowerCase().replace(/^www\./, "");
   const path = url.pathname.toLowerCase();
 
-  if (unreliableSourceHosts.some((blocked) => host.includes(blocked))) return false;
+  if (blockedSourceHosts.some((blocked) => host.includes(blocked))) return false;
   if (["/", "", "/feed", "/home", "/search", "/maps", "/local"].includes(path)) return false;
   if (path.includes("/search") || path.includes("/feed") || path.includes("/category/")) return false;
+  if (host.includes("facebook.com") || host.includes("fb.com")) {
+    return path.includes("/posts/") || path.includes("/permalink/") || path.includes("/groups/") && /\/posts\/\d+/.test(path);
+  }
+  if (host.includes("nextdoor.com") || host.includes("nextdoor.co.uk")) {
+    return path.includes("/p/") || path.includes("/news_feed/") || path.includes("/for_sale_and_free/") || path.includes("/post/");
+  }
   if (host.includes("craigslist.org")) return /\/d\/.+\/\d+\.html$/.test(path) || /\/\d+\.html$/.test(path);
   if (host.includes("reddit.com")) return path.includes("/comments/");
   return path.split("/").filter(Boolean).length >= 2;
@@ -162,25 +172,37 @@ function countMatches(text: string, patterns: RegExp[]) {
   return patterns.reduce((count, pattern) => count + (pattern.test(text) ? 1 : 0), 0);
 }
 
+function serviceKeywords(body: Body): string[] {
+  const ignored = new Set(["need", "needed", "service", "services", "help", "someone", "looking", "hire", "for", "the", "and"]);
+  return [body.keyword, body.category]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 1)
+    .flatMap((value) => value.toLowerCase().match(/[a-z0-9]+/g) ?? [])
+    .map((token) => token.replace(/ing$|ers$|er$|s$/i, ""))
+    .filter((token) => token.length > 2 && !ignored.has(token));
+}
+
 function serviceMatches(text: string, body: Body): boolean {
   const terms = [body.keyword, body.category]
     .filter((value): value is string => typeof value === "string" && value.trim().length > 1)
     .map((value) => value.trim().toLowerCase());
-  if (terms.length === 0) return true;
-  return terms.some((term) => text.includes(term));
+  const tokens = serviceKeywords(body);
+  if (terms.length === 0 && tokens.length === 0) return true;
+  return terms.some((term) => text.includes(term)) || tokens.some((token) => text.includes(token));
 }
 
 function hasBuyerRequestEvidence(text: string, body: Body): boolean {
   const normalized = text.toLowerCase();
+  if (countMatches(normalized, unavailablePagePatterns) > 0) return false;
   if (!serviceMatches(normalized, body)) return false;
 
-  const buyerScore = countMatches(normalized, buyerIntentPatterns);
-  const providerScore = countMatches(normalized, providerOfferPatterns);
+  const primaryContent = normalized.slice(0, 2500);
+  const buyerScore = countMatches(primaryContent, buyerIntentPatterns);
+  const providerScore = countMatches(primaryContent, providerOfferPatterns);
   const title = normalized.split("\n")[0] ?? "";
   const titleLooksLikeProvider = directoryOrProviderTitlePatterns.some((pattern) => pattern.test(title));
 
   if (buyerScore < 1) return false;
-  if (providerScore >= buyerScore) return false;
+  if (providerScore > buyerScore + 1) return false;
   if (titleLooksLikeProvider && providerScore > 0) return false;
   return true;
 }
@@ -216,7 +238,7 @@ function buildSearchQuery(body: Body) {
   const platform = body.platform ? `${body.platform} ` : "";
   const category = body.category ? `${body.category} ` : "";
   const service = `${category}${body.keyword}`.trim();
-  return `${platform}("need ${service}" OR "looking for ${service}" OR "ISO ${service}" OR "${service} needed" OR "hire ${service}" OR "recommend ${service}") ${location} phone OR email -"free estimate" -"licensed and insured" -"call us" -"our services"`.trim();
+  return `${platform}("need ${service}" OR "looking for ${service}" OR "ISO ${service}" OR "${service} needed" OR "hire ${service}" OR "recommend ${service}" OR "can anyone recommend ${service}" OR "need someone for ${service}") ${location} -"free estimate" -"licensed and insured" -"call us" -"our services" -"we offer" -"serving"`.trim();
 }
 
 function collectDocuments(results: unknown[], body: Body): SourceDocument[] {
@@ -238,7 +260,6 @@ function collectDocuments(results: unknown[], body: Body): SourceDocument[] {
       emails: extractEmails(evidence),
       phones: extractPhones(evidence),
     };
-    if (contacts.emails.length === 0 && contacts.phones.length === 0) continue;
 
     seen.add(rawUrl);
     docs.push({
@@ -265,7 +286,6 @@ function sanitizeLead(lead: Record<string, unknown>, doc: SourceDocument, body: 
   const phone = typeof lead.customer_phone === "string" && doc.contacts.phones.includes(formatPhone(lead.customer_phone))
     ? formatPhone(lead.customer_phone)
     : doc.contacts.phones[0] ?? null;
-  if (!email && !phone) return null;
 
   return {
     customer_name: typeof lead.customer_name === "string" && lead.customer_name.trim() ? lead.customer_name.trim() : "Source contact",
@@ -316,7 +336,7 @@ Deno.serve(async (req) => {
       return jsonResponse({
         leads: [],
         filters: body,
-        message: "No buyer-request posts with verified contact information were found. Provider ads and seller posts were filtered out.",
+        message: "No buyer-request source posts were found. Provider ads and seller posts were filtered out.",
       });
     }
 
@@ -417,6 +437,12 @@ Return ONLY JSON.`;
     return jsonResponse({ leads, filters: body });
   } catch (err) {
     console.error("ai-hunt-leads error", err);
-    return jsonResponse({ error: (err as Error).message }, 500);
+    const message = (err as Error).message;
+    if (message.includes("[402]") || message.toLowerCase().includes("insufficient credits")) {
+      return jsonResponse({
+        error: "Lead search credits are exhausted. Please top up or upgrade the connected Firecrawl account, then try again.",
+      }, 402);
+    }
+    return jsonResponse({ error: message }, 500);
   }
 });

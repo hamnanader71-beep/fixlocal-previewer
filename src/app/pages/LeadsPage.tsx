@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Filter, Plus, Search, Loader2 } from "lucide-react";
+import { ExternalLink, Filter, Plus, Search, Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { relativeTime, type LeadRow } from "../data/types";
@@ -106,7 +106,17 @@ export default function LeadsPage() {
             )},
             { key: "loc", header: "Location", render: (l) => <div className="text-xs">{l.city ?? "—"}, {l.state ?? ""}<div className="text-muted-foreground">{l.country ?? ""}</div></div> },
             { key: "cat", header: "Category", render: (l) => l.category ? <Badge variant="outline">{l.category}</Badge> : <span className="text-xs text-muted-foreground">—</span> },
-            { key: "source", header: "Source", render: (l) => <span className="text-xs">{l.source ?? "—"}</span> },
+            { key: "source", header: "Source", render: (l) => l.source_url ? (
+              <a
+                href={l.source_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+              >
+                {l.source ?? "Open source"} <ExternalLink className="h-3 w-3" />
+              </a>
+            ) : <span className="text-xs text-muted-foreground">{l.source ?? "Not Available"}</span> },
             { key: "score", header: "AI Score", render: (l) => l.ai_score != null ? (
               <div className="flex items-center gap-2">
                 <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden">
