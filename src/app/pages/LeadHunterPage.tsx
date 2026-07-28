@@ -163,8 +163,9 @@ export default function LeadHunterPage() {
     }).select("id").single();
     setSavingIdx(null);
     if (error) { toast.error(error.message); return; }
+    if (!data?.id) { toast.error("Lead saved, but detail page could not open."); return; }
     toast.success("Lead saved to your pipeline");
-    navigate(`/leads/${data!.id}`);
+    navigate(`/leads/${data.id}`);
   }
 
   return (
