@@ -105,9 +105,15 @@ function isExactPublicPostUrl(rawUrl: string): boolean {
   const host = url.hostname.toLowerCase().replace(/^www\./, "");
   const path = url.pathname.toLowerCase();
 
-  if (unreliableSourceHosts.some((blocked) => host.includes(blocked))) return false;
+  if (blockedSourceHosts.some((blocked) => host.includes(blocked))) return false;
   if (["/", "", "/feed", "/home", "/search", "/maps", "/local"].includes(path)) return false;
   if (path.includes("/search") || path.includes("/feed") || path.includes("/category/")) return false;
+  if (host.includes("facebook.com") || host.includes("fb.com")) {
+    return path.includes("/posts/") || path.includes("/permalink/") || path.includes("/groups/") && /\/posts\/\d+/.test(path);
+  }
+  if (host.includes("nextdoor.com") || host.includes("nextdoor.co.uk")) {
+    return path.includes("/p/") || path.includes("/news_feed/") || path.includes("/for_sale_and_free/") || path.includes("/post/");
+  }
   if (host.includes("craigslist.org")) return /\/d\/.+\/\d+\.html$/.test(path) || /\/\d+\.html$/.test(path);
   if (host.includes("reddit.com")) return path.includes("/comments/");
   return path.split("/").filter(Boolean).length >= 2;
