@@ -336,7 +336,7 @@ Deno.serve(async (req) => {
       return jsonResponse({
         leads: [],
         filters: body,
-        message: "No buyer-request posts with verified contact information were found. Provider ads and seller posts were filtered out.",
+        message: "No buyer-request source posts were found. Provider ads and seller posts were filtered out.",
       });
     }
 
@@ -437,6 +437,12 @@ Return ONLY JSON.`;
     return jsonResponse({ leads, filters: body });
   } catch (err) {
     console.error("ai-hunt-leads error", err);
-    return jsonResponse({ error: (err as Error).message }, 500);
+    const message = (err as Error).message;
+    if (message.includes("[402]") || message.toLowerCase().includes("insufficient credits")) {
+      return jsonResponse({
+        error: "Lead search credits are exhausted. Please top up or upgrade the connected Firecrawl account, then try again.",
+      }, 402);
+    }
+    return jsonResponse({ error: message }, 500);
   }
 });
