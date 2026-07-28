@@ -45,14 +45,10 @@ const blockedEmailDomains = new Set([
   "domain.com",
 ]);
 
-const unreliableSourceHosts = [
+const blockedSourceHosts = [
   "google.",
   "g.page",
   "maps.google",
-  "facebook.com",
-  "fb.com",
-  "nextdoor.com",
-  "nextdoor.co.uk",
 ];
 
 const buyerIntentPatterns = [
@@ -71,6 +67,10 @@ const providerOfferPatterns = [
 
 const directoryOrProviderTitlePatterns = [
   /\b(best|top|near me|services?|company|companies|contractors?|pros?|professionals?)\b/i,
+];
+
+const providerContactContextPatterns = [
+  /\b(call us|contact us|book now|schedule|free estimates?|licensed|insured|our team|our company|we offer|we provide|services include)\b/i,
 ];
 
 function jsonResponse(payload: unknown, status = 200) {
