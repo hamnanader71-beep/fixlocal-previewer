@@ -6,10 +6,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
-  Radar, Sparkles, Loader2, MapPin, Clock, DollarSign, ExternalLink, Save, Filter,
+  Radar, Sparkles, Loader2, MapPin, Clock, DollarSign, ExternalLink, Save, Filter, AlertTriangle, RefreshCw,
 } from "lucide-react";
+import { FunctionsHttpError } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "../auth/AuthProvider";
 import { toast } from "sonner";
@@ -42,6 +44,14 @@ interface HuntedLead {
   reasoning?: string;
 }
 
+interface CreditStatus {
+  remainingCredits: number | null;
+  planCredits: number | null;
+  billingPeriodStart: string | null;
+  billingPeriodEnd: string | null;
+  exhausted: boolean;
+}
+
 const priorityColor: Record<string, string> = {
   hot: "bg-red-500/10 text-red-600 border-red-500/20",
   good: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20",
@@ -61,6 +71,8 @@ export default function LeadHunterPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [hunting, setHunting] = useState(false);
+  const [checkingCredits, setCheckingCredits] = useState(true);
+  const [creditStatus, setCreditStatus] = useState<CreditStatus | null>(null);
   const [results, setResults] = useState<HuntedLead[]>([]);
   const [huntMessage, setHuntMessage] = useState<string | null>(null);
   const [savingIdx, setSavingIdx] = useState<number | null>(null);
@@ -70,6 +82,7 @@ export default function LeadHunterPage() {
     supabase.from("countries").select("name,code").order("name").then(({ data }) => {
       setCountries((data ?? []) as { name: string; code: string }[]);
     });
+    void checkCreditStatus(true);
   }, []);
 
   const [f, setF] = useState({
@@ -92,9 +105,50 @@ export default function LeadHunterPage() {
     setF((p) => ({ ...p, [k]: v }));
   }
 
+  async function readFunctionError(error: unknown) {
+    if (error instanceof FunctionsHttpError) {
+      const text = await error.context.text();
+      try {
+        const parsed = JSON.parse(text) as { error?: string; message?: string; credits?: CreditStatus };
+        if (parsed.credits) setCreditStatus(parsed.credits);
+        return parsed.error ?? parsed.message ?? error.message;
+      } catch {
+        return text || error.message;
+      }
+    }
+    return error instanceof Error ? error.message : "Lead hunt failed";
+  }
+
+  async function checkCreditStatus(silent = false) {
+    if (!silent) setCheckingCredits(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("ai-hunt-leads", {
+        body: { action: "credit_status", keyword: "status" },
+      });
+      if (error) throw error;
+      const credits = (data?.credits ?? null) as CreditStatus | null;
+      setCreditStatus(credits);
+      const message = typeof data?.message === "string" ? data.message : null;
+      if (credits?.exhausted) setHuntMessage(message ?? "Lead source credits are exhausted. Hunting is paused until credits are topped up.");
+      if (!silent && credits && !credits.exhausted) toast.success("Lead source credits are available.");
+    } catch (err) {
+      const message = await readFunctionError(err);
+      if (!silent) toast.error(message);
+      setHuntMessage(message);
+    } finally {
+      setCheckingCredits(false);
+    }
+  }
+
   async function hunt(e?: React.FormEvent) {
     e?.preventDefault();
     if (!f.keyword.trim()) { toast.error("Enter a keyword to hunt for."); return; }
+    if (creditStatus?.exhausted) {
+      const message = "Lead source credits are exhausted. Hunting is paused until the connected Firecrawl account is topped up or upgraded.";
+      setHuntMessage(message);
+      toast.error(message);
+      return;
+    }
     setHunting(true);
     setResults([]);
     setHuntMessage(null);
@@ -127,7 +181,9 @@ export default function LeadHunterPage() {
       }
     } catch (err) {
       console.error(err);
-      toast.error((err as Error).message ?? "Lead hunt failed");
+      const message = await readFunctionError(err);
+      setHuntMessage(message);
+      toast.error(message);
     } finally {
       setHunting(false);
     }
@@ -168,6 +224,10 @@ export default function LeadHunterPage() {
     navigate(`/leads/${data.id}`);
   }
 
+  const creditLine = creditStatus
+    ? `${formatCredits(creditStatus.remainingCredits)} remaining of ${formatCredits(creditStatus.planCredits)} plan credits${creditStatus.billingPeriodEnd ? ` · resets ${new Date(creditStatus.billingPeriodEnd).toLocaleDateString()}` : ""}`
+    : checkingCredits ? "Checking lead source credits…" : "Credit status unavailable.";
+
   return (
     <div className="p-6 max-w-[1600px]">
       <PageHeader
@@ -178,6 +238,21 @@ export default function LeadHunterPage() {
 
       <Card className="mb-6">
         <CardContent className="p-5">
+          <Alert variant={creditStatus?.exhausted ? "destructive" : "default"} className="mb-4">
+            {creditStatus?.exhausted ? <AlertTriangle className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />}
+            <AlertTitle>{creditStatus?.exhausted ? "Lead hunting paused" : "Lead source credits"}</AlertTitle>
+            <AlertDescription className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <span>
+                {creditStatus?.exhausted
+                  ? "Firecrawl credits are exhausted, so new hunts are blocked to avoid broken or unreliable leads. Top up or upgrade the connected Firecrawl account, then recheck."
+                  : creditLine}
+              </span>
+              <Button type="button" size="sm" variant="outline" onClick={() => void checkCreditStatus()} disabled={checkingCredits || hunting}>
+                {checkingCredits ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <RefreshCw className="h-3.5 w-3.5 mr-1.5" />}
+                Recheck
+              </Button>
+            </AlertDescription>
+          </Alert>
           <form onSubmit={hunt} className="space-y-4">
             <div className="flex flex-col md:flex-row gap-2">
               <div className="relative flex-1">
@@ -190,7 +265,7 @@ export default function LeadHunterPage() {
                   onChange={(e) => up("keyword", e.target.value)}
                 />
               </div>
-              <Button type="submit" size="lg" disabled={hunting} className="h-11 min-w-[140px]">
+              <Button type="submit" size="lg" disabled={hunting || checkingCredits || creditStatus?.exhausted} className="h-11 min-w-[140px]">
                 {hunting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
                 {hunting ? "Hunting…" : "Hunt leads"}
               </Button>
@@ -366,6 +441,7 @@ export default function LeadHunterPage() {
                           href={l.source_url}
                           target="_blank"
                           rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
                           className="inline-flex items-center gap-1 text-primary hover:underline"
                         >
                           <ExternalLink className="h-3 w-3" />{l.source}
@@ -414,4 +490,8 @@ export default function LeadHunterPage() {
       )}
     </div>
   );
+}
+
+function formatCredits(value: number | null) {
+  return value == null ? "Unknown" : value.toLocaleString();
 }
