@@ -7,6 +7,7 @@ const corsHeaders = {
 };
 
 interface Body {
+  action?: "hunt" | "credit_status";
   keyword: string;
   category?: string;
   city?: string;
@@ -20,6 +21,14 @@ interface Body {
   segment?: "residential" | "commercial" | "any";
   priority?: "urgent" | "normal" | "any";
   limit?: number;
+}
+
+interface FirecrawlCredits {
+  remainingCredits: number | null;
+  planCredits: number | null;
+  billingPeriodStart: string | null;
+  billingPeriodEnd: string | null;
+  exhausted: boolean;
 }
 
 interface SourceDocument {
@@ -233,6 +242,36 @@ async function firecrawlSearch(query: string, limit: number, lovableKey: string,
   return [];
 }
 
+async function firecrawlCreditStatus(lovableKey: string, firecrawlKey: string): Promise<FirecrawlCredits> {
+  const response = await fetch("https://connector-gateway.lovable.dev/firecrawl/v2/team/credit-usage", {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${lovableKey}`,
+      "X-Connection-Api-Key": firecrawlKey,
+    },
+  });
+
+  if (!response.ok) {
+    const details = await response.text();
+    throw new Error(`Lead source credit check failed [${response.status}]: ${details}`);
+  }
+
+  const result = await response.json();
+  const data = result?.data && typeof result.data === "object" ? result.data as Record<string, unknown> : {};
+  const remainingCredits = typeof data.remainingCredits === "number" ? data.remainingCredits : null;
+  const planCredits = typeof data.planCredits === "number" ? data.planCredits : null;
+  const billingPeriodStart = typeof data.billingPeriodStart === "string" ? data.billingPeriodStart : null;
+  const billingPeriodEnd = typeof data.billingPeriodEnd === "string" ? data.billingPeriodEnd : null;
+
+  return {
+    remainingCredits,
+    planCredits,
+    billingPeriodStart,
+    billingPeriodEnd,
+    exhausted: remainingCredits != null && remainingCredits <= 0,
+  };
+}
+
 function buildSearchQuery(body: Body) {
   const location = [body.city, body.state, body.country].filter(Boolean).join(" ");
   const platform = body.platform ? `${body.platform} ` : "";
@@ -320,13 +359,31 @@ Deno.serve(async (req) => {
 
   try {
     const body: Body = await req.json();
-    if (!body.keyword || body.keyword.trim().length < 2) {
-      return jsonResponse({ error: "keyword is required" }, 400);
-    }
     const apiKey = Deno.env.get("LOVABLE_API_KEY");
     if (!apiKey) throw new Error("LOVABLE_API_KEY not configured");
     const firecrawlKey = Deno.env.get("FIRECRAWL_API_KEY");
     if (!firecrawlKey) throw new Error("FIRECRAWL_API_KEY not configured");
+
+    const credits = await firecrawlCreditStatus(apiKey, firecrawlKey);
+    if (body.action === "credit_status") {
+      return jsonResponse({
+        credits,
+        message: credits.exhausted
+          ? "Lead source credits are exhausted. Hunting is paused until the connected Firecrawl account is topped up or upgraded."
+          : "Lead source credits are available.",
+      });
+    }
+
+    if (credits.exhausted) {
+      return jsonResponse({
+        error: "Lead source credits are exhausted. Hunting is paused until the connected Firecrawl account is topped up or upgraded.",
+        credits,
+      }, 402);
+    }
+
+    if (!body.keyword || body.keyword.trim().length < 2) {
+      return jsonResponse({ error: "keyword is required" }, 400);
+    }
 
     const limit = Math.min(Math.max(body.limit ?? 8, 3), 15);
     const searchRows = await firecrawlSearch(buildSearchQuery(body), Math.max(limit * 5, 15), apiKey, firecrawlKey);
