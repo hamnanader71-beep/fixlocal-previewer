@@ -139,6 +139,13 @@ function isExactPublicPostUrl(rawUrl: string): boolean {
   return path.split("/").filter(Boolean).length >= 2;
 }
 
+function isSocialPostUrl(rawUrl: string): boolean {
+  const normalized = normalizeUrl(rawUrl);
+  if (!normalized) return false;
+  const host = new URL(normalized).hostname.toLowerCase();
+  return host.includes("facebook.com") || host.includes("fb.com") || host.includes("nextdoor") || host.includes("reddit.com");
+}
+
 function sourceName(rawUrl: string): string {
   const host = new URL(rawUrl).hostname.toLowerCase().replace(/^www\./, "");
   if (host.includes("craigslist")) return "Craigslist";
@@ -189,12 +196,35 @@ function countMatches(text: string, patterns: RegExp[]) {
 }
 
 function serviceKeywords(body: Body): string[] {
-  const ignored = new Set(["need", "needed", "service", "services", "help", "someone", "looking", "hire", "for", "the", "and"]);
+  const ignored = new Set(["need", "needed", "service", "services", "help", "someone", "looking", "hire", "for", "the", "and", "want", "wanted", "recommend", "recommendation", "recommendations"]);
   return [body.keyword, body.category]
     .filter((value): value is string => typeof value === "string" && value.trim().length > 1)
     .flatMap((value) => value.toLowerCase().match(/[a-z0-9]+/g) ?? [])
     .map((token) => token.replace(/ing$|ers$|er$|s$/i, ""))
     .filter((token) => token.length > 2 && !ignored.has(token));
+}
+
+function leadServicePhrase(body: Body): string {
+  const raw = [body.category, body.keyword]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .join(" ")
+    .toLowerCase()
+    .replace(/\b(i|we|my|our|a|an|the|need|needed|want|wanted|looking|look|for|seeking|hiring|hire|iso|in search of|recommendations?|can anyone recommend|does anyone know|someone|to|who can)\b/g, " ")
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!raw) return body.keyword.trim();
+  const aliases: Record<string, string> = {
+    plumbing: "plumber",
+    electrical: "electrician",
+    roofing: "roofer",
+    cleaning: "cleaner",
+    landscaping: "landscaper",
+    painting: "painter",
+    hvac: "hvac technician",
+  };
+  return aliases[raw] ?? raw;
 }
 
 function serviceMatches(text: string, body: Body): boolean {
@@ -221,6 +251,13 @@ function hasBuyerRequestEvidence(text: string, body: Body): boolean {
   if (providerScore > buyerScore + 1) return false;
   if (titleLooksLikeProvider && providerScore > 0) return false;
   return true;
+}
+
+function looksLikeProviderResult(text: string): boolean {
+  const normalized = text.toLowerCase();
+  const providerScore = countMatches(normalized.slice(0, 1800), providerOfferPatterns);
+  const buyerScore = countMatches(normalized.slice(0, 1800), buyerIntentPatterns);
+  return providerScore > buyerScore + 1;
 }
 
 function getFirecrawlAuth(): FirecrawlAuth {
@@ -321,9 +358,8 @@ async function firecrawlCreditStatus(auth: FirecrawlAuth): Promise<FirecrawlCred
 function buildSearchQuery(body: Body) {
   const location = [body.city, body.state, body.country].filter(Boolean).join(" ");
   const platform = body.platform ? `${body.platform} ` : "";
-  const category = body.category ? `${body.category} ` : "";
-  const service = `${category}${body.keyword}`.trim();
-  return `${platform}("need ${service}" OR "looking for ${service}" OR "ISO ${service}" OR "${service} needed" OR "hire ${service}" OR "recommend ${service}" OR "can anyone recommend ${service}" OR "need someone for ${service}") ${location} -"free estimate" -"licensed and insured" -"call us" -"our services" -"we offer" -"serving"`.trim();
+  const service = leadServicePhrase(body);
+  return `${platform}("need a ${service}" OR "need ${service}" OR "looking for a ${service}" OR "looking for ${service}" OR "ISO ${service}" OR "${service} needed" OR "can anyone recommend ${service}" OR "does anyone know a ${service}") ${location} -jobs -career -careers -salary -hiring -"free estimate" -"licensed and insured" -"call us" -"our services" -"we offer" -"serving the"`.trim();
 }
 
 function collectDocuments(results: unknown[], body: Body): SourceDocument[] {
@@ -338,7 +374,8 @@ function collectDocuments(results: unknown[], body: Body): SourceDocument[] {
     const title = typeof row.title === "string" ? row.title : readNestedString(row.metadata, "title") ?? "";
     const description = typeof row.description === "string" ? row.description : "";
     const evidence = `${title}\n${description}\n${markdown}`.trim();
-    if (evidence.length < 120) continue;
+    if (evidence.length < (isSocialPostUrl(rawUrl) ? 45 : 120)) continue;
+    if (looksLikeProviderResult(evidence)) continue;
     if (!hasBuyerRequestEvidence(evidence, body)) continue;
 
     const contacts = {
@@ -358,6 +395,36 @@ function collectDocuments(results: unknown[], body: Body): SourceDocument[] {
   }
 
   return docs;
+}
+
+function fallbackLeadFromDocument(doc: SourceDocument, body: Body) {
+  const service = doc.title || `${leadServicePhrase(body)} request`;
+  const description = doc.description || doc.markdown.split("\n").find((line) => line.trim().length > 30)?.trim() || service;
+  return sanitizeLead({
+    customer_name: "Source contact",
+    service,
+    description,
+    category: body.category ?? leadServicePhrase(body),
+    city: body.city,
+    state: body.state,
+    country: body.country,
+    source: doc.source,
+    source_url: doc.url,
+    doc_url: doc.url,
+    posted_ago_hours: null,
+    segment: body.segment === "commercial" ? "commercial" : "residential",
+    priority: doc.contacts.emails.length || doc.contacts.phones.length ? "good" : "medium",
+    urgency: countMatches(`${doc.title}\n${doc.description}`.toLowerCase(), [/\burgent\b/i, /\bemergency\b/i, /\basap\b/i]) ? "high" : "medium",
+    estimated_value_low: null,
+    estimated_value_high: null,
+    recommended_sale_price: doc.contacts.emails.length || doc.contacts.phones.length ? 25 : 10,
+    ai_score: doc.contacts.emails.length || doc.contacts.phones.length ? 78 : 68,
+    ai_confidence: doc.markdown.length > 0 ? 76 : 62,
+    suggested_reply: "Hi, I saw your service request and can connect you with a vetted local pro. What time works best to discuss the job details?",
+    reasoning: "Buyer intent was visible in the public source title or description.",
+    customer_email: doc.contacts.emails[0] ?? null,
+    customer_phone: doc.contacts.phones[0] ?? null,
+  }, doc, body);
 }
 
 function sanitizeLead(lead: Record<string, unknown>, doc: SourceDocument, body: Body) {
@@ -536,7 +603,11 @@ Return ONLY JSON.`;
       .filter(Boolean)
       .slice(0, limit);
 
-    return jsonResponse({ leads, filters: body });
+    const finalLeads = leads.length > 0
+      ? leads
+      : documents.map((doc) => fallbackLeadFromDocument(doc, body)).filter(Boolean).slice(0, limit);
+
+    return jsonResponse({ leads: finalLeads, filters: body });
   } catch (err) {
     console.error("ai-hunt-leads error", err);
     const message = (err as Error).message;
