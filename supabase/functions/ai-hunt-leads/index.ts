@@ -43,6 +43,13 @@ interface SourceDocument {
   };
 }
 
+interface FirecrawlAuth {
+  mode: "direct" | "gateway";
+  firecrawlKey: string;
+  lovableKey?: string;
+  baseUrl: string;
+}
+
 const blockedEmailDomains = new Set([
   "example.com",
   "example.org",
@@ -216,14 +223,56 @@ function hasBuyerRequestEvidence(text: string, body: Body): boolean {
   return true;
 }
 
-async function firecrawlSearch(query: string, limit: number, lovableKey: string, firecrawlKey: string) {
-  const response = await fetch("https://connector-gateway.lovable.dev/firecrawl/v2/search", {
+function getFirecrawlAuth(): FirecrawlAuth {
+  const firecrawlKey = Deno.env.get("FIRECRAWL_API_KEY")?.trim();
+  if (!firecrawlKey) throw new Error("FIRECRAWL_API_KEY not configured");
+
+  if (firecrawlKey.startsWith("lovc_")) {
+    const lovableKey = Deno.env.get("LOVABLE_API_KEY")?.trim();
+    if (!lovableKey) throw new Error("LOVABLE_API_KEY not configured for Firecrawl connector gateway");
+    return {
+      mode: "gateway",
+      firecrawlKey,
+      lovableKey,
+      baseUrl: "https://connector-gateway.lovable.dev/firecrawl/v2",
+    };
+  }
+
+  return {
+    mode: "direct",
+    firecrawlKey,
+    baseUrl: "https://api.firecrawl.dev/v2",
+  };
+}
+
+function firecrawlHeaders(auth: FirecrawlAuth, includeContentType = false): HeadersInit {
+  const headers: Record<string, string> = {};
+  if (includeContentType) headers["Content-Type"] = "application/json";
+
+  if (auth.mode === "gateway") {
+    headers.Authorization = `Bearer ${auth.lovableKey}`;
+    headers["X-Connection-Api-Key"] = auth.firecrawlKey;
+  } else {
+    headers.Authorization = `Bearer ${auth.firecrawlKey}`;
+  }
+
+  return headers;
+}
+
+function firecrawlErrorMessage(status: number, details: string, context: "credit check" | "search") {
+  if (status === 401) {
+    return `Firecrawl ${context} failed [401]: the saved FIRECRAWL_API_KEY is not authorized. Please update the Firecrawl secret with the current API key from your Firecrawl account.`;
+  }
+  if (status === 402) {
+    return `Firecrawl ${context} failed [402]: credits are exhausted. Please top up or upgrade the connected Firecrawl account.`;
+  }
+  return `Firecrawl ${context} failed [${status}]: ${details}`;
+}
+
+async function firecrawlSearch(query: string, limit: number, auth: FirecrawlAuth) {
+  const response = await fetch(`${auth.baseUrl}/search`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${lovableKey}`,
-      "X-Connection-Api-Key": firecrawlKey,
-    },
+    headers: firecrawlHeaders(auth, true),
     body: JSON.stringify({
       query,
       limit,
@@ -233,7 +282,7 @@ async function firecrawlSearch(query: string, limit: number, lovableKey: string,
 
   if (!response.ok) {
     const details = await response.text();
-    throw new Error(`Lead source search failed [${response.status}]: ${details}`);
+    throw new Error(firecrawlErrorMessage(response.status, details, "search"));
   }
 
   const result = await response.json();
@@ -242,18 +291,15 @@ async function firecrawlSearch(query: string, limit: number, lovableKey: string,
   return [];
 }
 
-async function firecrawlCreditStatus(lovableKey: string, firecrawlKey: string): Promise<FirecrawlCredits> {
-  const response = await fetch("https://connector-gateway.lovable.dev/firecrawl/v2/team/credit-usage", {
+async function firecrawlCreditStatus(auth: FirecrawlAuth): Promise<FirecrawlCredits> {
+  const response = await fetch(`${auth.baseUrl}/team/credit-usage`, {
     method: "GET",
-    headers: {
-      Authorization: `Bearer ${lovableKey}`,
-      "X-Connection-Api-Key": firecrawlKey,
-    },
+    headers: firecrawlHeaders(auth),
   });
 
   if (!response.ok) {
     const details = await response.text();
-    throw new Error(`Lead source credit check failed [${response.status}]: ${details}`);
+    throw new Error(firecrawlErrorMessage(response.status, details, "credit check"));
   }
 
   const result = await response.json();
@@ -359,12 +405,11 @@ Deno.serve(async (req) => {
 
   try {
     const body: Body = await req.json();
-    const apiKey = Deno.env.get("LOVABLE_API_KEY");
+    const firecrawlAuth = getFirecrawlAuth();
+    const apiKey = Deno.env.get("LOVABLE_API_KEY")?.trim();
     if (!apiKey) throw new Error("LOVABLE_API_KEY not configured");
-    const firecrawlKey = Deno.env.get("FIRECRAWL_API_KEY");
-    if (!firecrawlKey) throw new Error("FIRECRAWL_API_KEY not configured");
 
-    const credits = await firecrawlCreditStatus(apiKey, firecrawlKey);
+    const credits = await firecrawlCreditStatus(firecrawlAuth);
     if (body.action === "credit_status") {
       return jsonResponse({
         credits,
@@ -386,7 +431,7 @@ Deno.serve(async (req) => {
     }
 
     const limit = Math.min(Math.max(body.limit ?? 8, 3), 15);
-    const searchRows = await firecrawlSearch(buildSearchQuery(body), Math.max(limit * 5, 15), apiKey, firecrawlKey);
+    const searchRows = await firecrawlSearch(buildSearchQuery(body), Math.max(limit * 5, 15), firecrawlAuth);
     const documents = collectDocuments(searchRows, body).slice(0, limit);
 
     if (documents.length === 0) {
@@ -495,10 +540,15 @@ Return ONLY JSON.`;
   } catch (err) {
     console.error("ai-hunt-leads error", err);
     const message = (err as Error).message;
-    if (message.includes("[402]") || message.toLowerCase().includes("insufficient credits")) {
+    if (message.includes("[402]") || message.toLowerCase().includes("insufficient credits") || message.toLowerCase().includes("credits are exhausted")) {
       return jsonResponse({
         error: "Lead search credits are exhausted. Please top up or upgrade the connected Firecrawl account, then try again.",
       }, 402);
+    }
+    if (message.includes("[401]") || message.toLowerCase().includes("not authorized") || message.toLowerCase().includes("unauthorized")) {
+      return jsonResponse({
+        error: "Firecrawl API key is not authorized. Please update the saved FIRECRAWL_API_KEY with the current key from your Firecrawl account, then recheck.",
+      }, 401);
     }
     return jsonResponse({ error: message }, 500);
   }
