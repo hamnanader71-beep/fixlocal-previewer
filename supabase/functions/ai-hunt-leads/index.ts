@@ -43,6 +43,13 @@ interface SourceDocument {
   };
 }
 
+interface FirecrawlAuth {
+  mode: "direct" | "gateway";
+  firecrawlKey: string;
+  lovableKey?: string;
+  baseUrl: string;
+}
+
 const blockedEmailDomains = new Set([
   "example.com",
   "example.org",
@@ -132,6 +139,20 @@ function isExactPublicPostUrl(rawUrl: string): boolean {
   return path.split("/").filter(Boolean).length >= 2;
 }
 
+function isSocialPostUrl(rawUrl: string): boolean {
+  const normalized = normalizeUrl(rawUrl);
+  if (!normalized) return false;
+  const host = new URL(normalized).hostname.toLowerCase();
+  return host.includes("facebook.com") || host.includes("fb.com") || host.includes("nextdoor") || host.includes("reddit.com");
+}
+
+function isOftenLockedSource(rawUrl: string): boolean {
+  const normalized = normalizeUrl(rawUrl);
+  if (!normalized) return true;
+  const host = new URL(normalized).hostname.toLowerCase();
+  return host.includes("facebook.com") || host.includes("fb.com") || host.includes("nextdoor.com") || host.includes("nextdoor.co.uk");
+}
+
 function sourceName(rawUrl: string): string {
   const host = new URL(rawUrl).hostname.toLowerCase().replace(/^www\./, "");
   if (host.includes("craigslist")) return "Craigslist";
@@ -182,12 +203,35 @@ function countMatches(text: string, patterns: RegExp[]) {
 }
 
 function serviceKeywords(body: Body): string[] {
-  const ignored = new Set(["need", "needed", "service", "services", "help", "someone", "looking", "hire", "for", "the", "and"]);
+  const ignored = new Set(["need", "needed", "service", "services", "help", "someone", "looking", "hire", "for", "the", "and", "want", "wanted", "recommend", "recommendation", "recommendations"]);
   return [body.keyword, body.category]
     .filter((value): value is string => typeof value === "string" && value.trim().length > 1)
     .flatMap((value) => value.toLowerCase().match(/[a-z0-9]+/g) ?? [])
     .map((token) => token.replace(/ing$|ers$|er$|s$/i, ""))
     .filter((token) => token.length > 2 && !ignored.has(token));
+}
+
+function leadServicePhrase(body: Body): string {
+  const raw = [body.category, body.keyword]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .join(" ")
+    .toLowerCase()
+    .replace(/\b(i|we|my|our|a|an|the|need|needed|want|wanted|looking|look|for|seeking|hiring|hire|iso|in search of|recommendations?|can anyone recommend|does anyone know|someone|to|who can)\b/g, " ")
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!raw) return body.keyword.trim();
+  const aliases: Record<string, string> = {
+    plumbing: "plumber",
+    electrical: "electrician",
+    roofing: "roofer",
+    cleaning: "cleaner",
+    landscaping: "landscaper",
+    painting: "painter",
+    hvac: "hvac technician",
+  };
+  return aliases[raw] ?? raw;
 }
 
 function serviceMatches(text: string, body: Body): boolean {
@@ -216,14 +260,63 @@ function hasBuyerRequestEvidence(text: string, body: Body): boolean {
   return true;
 }
 
-async function firecrawlSearch(query: string, limit: number, lovableKey: string, firecrawlKey: string) {
-  const response = await fetch("https://connector-gateway.lovable.dev/firecrawl/v2/search", {
+function looksLikeProviderResult(text: string): boolean {
+  const normalized = text.toLowerCase();
+  const providerScore = countMatches(normalized.slice(0, 1800), providerOfferPatterns);
+  const buyerScore = countMatches(normalized.slice(0, 1800), buyerIntentPatterns);
+  return providerScore > buyerScore + 1;
+}
+
+function getFirecrawlAuth(): FirecrawlAuth {
+  const firecrawlKey = Deno.env.get("FIRECRAWL_API_KEY")?.trim();
+  if (!firecrawlKey) throw new Error("FIRECRAWL_API_KEY not configured");
+
+  if (firecrawlKey.startsWith("lovc_")) {
+    const lovableKey = Deno.env.get("LOVABLE_API_KEY")?.trim();
+    if (!lovableKey) throw new Error("LOVABLE_API_KEY not configured for Firecrawl connector gateway");
+    return {
+      mode: "gateway",
+      firecrawlKey,
+      lovableKey,
+      baseUrl: "https://connector-gateway.lovable.dev/firecrawl/v2",
+    };
+  }
+
+  return {
+    mode: "direct",
+    firecrawlKey,
+    baseUrl: "https://api.firecrawl.dev/v2",
+  };
+}
+
+function firecrawlHeaders(auth: FirecrawlAuth, includeContentType = false): HeadersInit {
+  const headers: Record<string, string> = {};
+  if (includeContentType) headers["Content-Type"] = "application/json";
+
+  if (auth.mode === "gateway") {
+    headers.Authorization = `Bearer ${auth.lovableKey}`;
+    headers["X-Connection-Api-Key"] = auth.firecrawlKey;
+  } else {
+    headers.Authorization = `Bearer ${auth.firecrawlKey}`;
+  }
+
+  return headers;
+}
+
+function firecrawlErrorMessage(status: number, details: string, context: "credit check" | "search") {
+  if (status === 401) {
+    return `Firecrawl ${context} failed [401]: the saved FIRECRAWL_API_KEY is not authorized. Please update the Firecrawl secret with the current API key from your Firecrawl account.`;
+  }
+  if (status === 402) {
+    return `Firecrawl ${context} failed [402]: credits are exhausted. Please top up or upgrade the connected Firecrawl account.`;
+  }
+  return `Firecrawl ${context} failed [${status}]: ${details}`;
+}
+
+async function firecrawlSearch(query: string, limit: number, auth: FirecrawlAuth) {
+  const response = await fetch(`${auth.baseUrl}/search`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${lovableKey}`,
-      "X-Connection-Api-Key": firecrawlKey,
-    },
+    headers: firecrawlHeaders(auth, true),
     body: JSON.stringify({
       query,
       limit,
@@ -233,7 +326,7 @@ async function firecrawlSearch(query: string, limit: number, lovableKey: string,
 
   if (!response.ok) {
     const details = await response.text();
-    throw new Error(`Lead source search failed [${response.status}]: ${details}`);
+    throw new Error(firecrawlErrorMessage(response.status, details, "search"));
   }
 
   const result = await response.json();
@@ -242,18 +335,15 @@ async function firecrawlSearch(query: string, limit: number, lovableKey: string,
   return [];
 }
 
-async function firecrawlCreditStatus(lovableKey: string, firecrawlKey: string): Promise<FirecrawlCredits> {
-  const response = await fetch("https://connector-gateway.lovable.dev/firecrawl/v2/team/credit-usage", {
+async function firecrawlCreditStatus(auth: FirecrawlAuth): Promise<FirecrawlCredits> {
+  const response = await fetch(`${auth.baseUrl}/team/credit-usage`, {
     method: "GET",
-    headers: {
-      Authorization: `Bearer ${lovableKey}`,
-      "X-Connection-Api-Key": firecrawlKey,
-    },
+    headers: firecrawlHeaders(auth),
   });
 
   if (!response.ok) {
     const details = await response.text();
-    throw new Error(`Lead source credit check failed [${response.status}]: ${details}`);
+    throw new Error(firecrawlErrorMessage(response.status, details, "credit check"));
   }
 
   const result = await response.json();
@@ -275,9 +365,8 @@ async function firecrawlCreditStatus(lovableKey: string, firecrawlKey: string): 
 function buildSearchQuery(body: Body) {
   const location = [body.city, body.state, body.country].filter(Boolean).join(" ");
   const platform = body.platform ? `${body.platform} ` : "";
-  const category = body.category ? `${body.category} ` : "";
-  const service = `${category}${body.keyword}`.trim();
-  return `${platform}("need ${service}" OR "looking for ${service}" OR "ISO ${service}" OR "${service} needed" OR "hire ${service}" OR "recommend ${service}" OR "can anyone recommend ${service}" OR "need someone for ${service}") ${location} -"free estimate" -"licensed and insured" -"call us" -"our services" -"we offer" -"serving"`.trim();
+  const service = leadServicePhrase(body);
+  return `${platform}("need a ${service}" OR "need ${service}" OR "looking for a ${service}" OR "looking for ${service}" OR "ISO ${service}" OR "${service} needed" OR "can anyone recommend ${service}" OR "does anyone know a ${service}") ${location} -jobs -career -careers -salary -hiring -"free estimate" -"licensed and insured" -"call us" -"our services" -"we offer" -"serving the"`.trim();
 }
 
 function collectDocuments(results: unknown[], body: Body): SourceDocument[] {
@@ -292,7 +381,9 @@ function collectDocuments(results: unknown[], body: Body): SourceDocument[] {
     const title = typeof row.title === "string" ? row.title : readNestedString(row.metadata, "title") ?? "";
     const description = typeof row.description === "string" ? row.description : "";
     const evidence = `${title}\n${description}\n${markdown}`.trim();
-    if (evidence.length < 120) continue;
+    if (isOftenLockedSource(rawUrl) && markdown.length < 300) continue;
+    if (evidence.length < (isSocialPostUrl(rawUrl) ? 45 : 120)) continue;
+    if (looksLikeProviderResult(evidence)) continue;
     if (!hasBuyerRequestEvidence(evidence, body)) continue;
 
     const contacts = {
@@ -312,6 +403,36 @@ function collectDocuments(results: unknown[], body: Body): SourceDocument[] {
   }
 
   return docs;
+}
+
+function fallbackLeadFromDocument(doc: SourceDocument, body: Body) {
+  const service = doc.title || `${leadServicePhrase(body)} request`;
+  const description = doc.description || doc.markdown.split("\n").find((line) => line.trim().length > 30)?.trim() || service;
+  return sanitizeLead({
+    customer_name: "Source contact",
+    service,
+    description,
+    category: body.category ?? leadServicePhrase(body),
+    city: body.city,
+    state: body.state,
+    country: body.country,
+    source: doc.source,
+    source_url: doc.url,
+    doc_url: doc.url,
+    posted_ago_hours: null,
+    segment: body.segment === "commercial" ? "commercial" : "residential",
+    priority: doc.contacts.emails.length || doc.contacts.phones.length ? "good" : "medium",
+    urgency: countMatches(`${doc.title}\n${doc.description}`.toLowerCase(), [/\burgent\b/i, /\bemergency\b/i, /\basap\b/i]) ? "high" : "medium",
+    estimated_value_low: null,
+    estimated_value_high: null,
+    recommended_sale_price: doc.contacts.emails.length || doc.contacts.phones.length ? 25 : 10,
+    ai_score: doc.contacts.emails.length || doc.contacts.phones.length ? 78 : 68,
+    ai_confidence: doc.markdown.length > 0 ? 76 : 62,
+    suggested_reply: "Hi, I saw your service request and can connect you with a vetted local pro. What time works best to discuss the job details?",
+    reasoning: "Buyer intent was visible in the public source title or description.",
+    customer_email: doc.contacts.emails[0] ?? null,
+    customer_phone: doc.contacts.phones[0] ?? null,
+  }, doc, body);
 }
 
 function sanitizeLead(lead: Record<string, unknown>, doc: SourceDocument, body: Body) {
@@ -359,12 +480,11 @@ Deno.serve(async (req) => {
 
   try {
     const body: Body = await req.json();
-    const apiKey = Deno.env.get("LOVABLE_API_KEY");
+    const firecrawlAuth = getFirecrawlAuth();
+    const apiKey = Deno.env.get("LOVABLE_API_KEY")?.trim();
     if (!apiKey) throw new Error("LOVABLE_API_KEY not configured");
-    const firecrawlKey = Deno.env.get("FIRECRAWL_API_KEY");
-    if (!firecrawlKey) throw new Error("FIRECRAWL_API_KEY not configured");
 
-    const credits = await firecrawlCreditStatus(apiKey, firecrawlKey);
+    const credits = await firecrawlCreditStatus(firecrawlAuth);
     if (body.action === "credit_status") {
       return jsonResponse({
         credits,
@@ -386,7 +506,7 @@ Deno.serve(async (req) => {
     }
 
     const limit = Math.min(Math.max(body.limit ?? 8, 3), 15);
-    const searchRows = await firecrawlSearch(buildSearchQuery(body), Math.max(limit * 5, 15), apiKey, firecrawlKey);
+    const searchRows = await firecrawlSearch(buildSearchQuery(body), Math.max(limit * 5, 15), firecrawlAuth);
     const documents = collectDocuments(searchRows, body).slice(0, limit);
 
     if (documents.length === 0) {
@@ -491,14 +611,23 @@ Return ONLY JSON.`;
       .filter(Boolean)
       .slice(0, limit);
 
-    return jsonResponse({ leads, filters: body });
+    const finalLeads = leads.length > 0
+      ? leads
+      : documents.map((doc) => fallbackLeadFromDocument(doc, body)).filter(Boolean).slice(0, limit);
+
+    return jsonResponse({ leads: finalLeads, filters: body });
   } catch (err) {
     console.error("ai-hunt-leads error", err);
     const message = (err as Error).message;
-    if (message.includes("[402]") || message.toLowerCase().includes("insufficient credits")) {
+    if (message.includes("[402]") || message.toLowerCase().includes("insufficient credits") || message.toLowerCase().includes("credits are exhausted")) {
       return jsonResponse({
         error: "Lead search credits are exhausted. Please top up or upgrade the connected Firecrawl account, then try again.",
       }, 402);
+    }
+    if (message.includes("[401]") || message.toLowerCase().includes("not authorized") || message.toLowerCase().includes("unauthorized")) {
+      return jsonResponse({
+        error: "Firecrawl API key is not authorized. Please update the saved FIRECRAWL_API_KEY with the current key from your Firecrawl account, then recheck.",
+      }, 401);
     }
     return jsonResponse({ error: message }, 500);
   }
