@@ -146,6 +146,13 @@ function isSocialPostUrl(rawUrl: string): boolean {
   return host.includes("facebook.com") || host.includes("fb.com") || host.includes("nextdoor") || host.includes("reddit.com");
 }
 
+function isOftenLockedSource(rawUrl: string): boolean {
+  const normalized = normalizeUrl(rawUrl);
+  if (!normalized) return true;
+  const host = new URL(normalized).hostname.toLowerCase();
+  return host.includes("facebook.com") || host.includes("fb.com") || host.includes("nextdoor.com") || host.includes("nextdoor.co.uk");
+}
+
 function sourceName(rawUrl: string): string {
   const host = new URL(rawUrl).hostname.toLowerCase().replace(/^www\./, "");
   if (host.includes("craigslist")) return "Craigslist";
@@ -374,6 +381,7 @@ function collectDocuments(results: unknown[], body: Body): SourceDocument[] {
     const title = typeof row.title === "string" ? row.title : readNestedString(row.metadata, "title") ?? "";
     const description = typeof row.description === "string" ? row.description : "";
     const evidence = `${title}\n${description}\n${markdown}`.trim();
+    if (isOftenLockedSource(rawUrl) && markdown.length < 300) continue;
     if (evidence.length < (isSocialPostUrl(rawUrl) ? 45 : 120)) continue;
     if (looksLikeProviderResult(evidence)) continue;
     if (!hasBuyerRequestEvidence(evidence, body)) continue;
