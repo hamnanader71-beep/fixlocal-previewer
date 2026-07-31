@@ -69,7 +69,7 @@ const platforms = ["Any", "Craigslist", "Facebook", "Nextdoor", "Reddit", "Thumb
 
 export default function LeadHunterPage() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const [hunting, setHunting] = useState(false);
   const [checkingCredits, setCheckingCredits] = useState(true);
   const [creditStatus, setCreditStatus] = useState<CreditStatus | null>(null);
@@ -175,7 +175,7 @@ export default function LeadHunterPage() {
       setResults(leads);
       setHuntMessage(typeof data?.message === "string" ? data.message : null);
       if (leads.length === 0) {
-        toast.info(data?.message ?? "No verified public source posts were found.");
+        toast.info(data?.message ?? "No verified buyer requests with public contact details were found.");
       } else {
         toast.success(`Found ${leads.length} verified leads for "${f.keyword}"`);
       }
@@ -454,11 +454,17 @@ export default function LeadHunterPage() {
                     {l.source_verified && <Badge variant="secondary" className="text-[10px]">Source verified</Badge>}
                   </div>
 
-                  <div className="flex flex-wrap gap-2 mb-3 text-xs text-muted-foreground">
-                    <span>Email: {l.customer_email || "Not Available"}</span>
-                    <span>Phone: {l.customer_phone || "Not Available"}</span>
-                    {!l.contact_verified && <Badge variant="outline" className="text-[10px]">No public contact found</Badge>}
-                  </div>
+                    <div className="flex flex-wrap gap-2 mb-3 text-xs text-muted-foreground">
+                      {isAdmin ? (
+                        <>
+                          <span>Email: {l.customer_email || "Not Available"}</span>
+                          <span>Phone: {l.customer_phone || "Not Available"}</span>
+                          {l.contact_verified && <Badge variant="secondary" className="text-[10px]">Contact verified</Badge>}
+                        </>
+                      ) : (
+                        <span>Contact details are visible to admins only.</span>
+                      )}
+                    </div>
 
                   {l.suggested_reply && (
                     <div className="rounded-md bg-muted/40 border p-2.5 text-xs mb-3">
