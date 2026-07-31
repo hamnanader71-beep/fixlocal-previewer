@@ -65,7 +65,21 @@ const blockedSourceHosts = [
   "google.",
   "g.page",
   "maps.google",
+  "tiktok.com",
+  "instagram.com",
+  "youtube.com",
+  "youtu.be",
+  "pinterest.",
+  "medium.com",
+  "substack.com",
+  "wikipedia.org",
 ];
+
+const platformEmailDomains = new Set([
+  "facebook.com", "meta.com", "reddit.com", "nextdoor.com", "craigslist.org",
+  "upwork.com", "fiverr.com", "linkedin.com", "thumbtack.com", "angi.com",
+  "homeadvisor.com", "support.com",
+]);
 
 const buyerIntentPatterns = [
   /\b(i|we|my|our)\s+(need|needs|needed|want|wanted|looking for|look for|seeking|hiring|hire)\b/i,
@@ -83,6 +97,12 @@ const providerOfferPatterns = [
 
 const directoryOrProviderTitlePatterns = [
   /\b(best|top|near me|services?|company|companies|contractors?|pros?|professionals?)\b/i,
+];
+
+const editorialPatterns = [
+  /\b(blog|article|guide|how to|tips? for|ideas? for|everything you need to know|what to know|ultimate guide|complete guide)\b/i,
+  /\b(read more|related posts?|recent posts?|categories|author|published by|table of contents|subscribe to our newsletter)\b/i,
+  /\b(top \d+|best \d+|\d+ ways? to|step-by-step)\b/i,
 ];
 
 const providerContactContextPatterns = [
@@ -127,7 +147,7 @@ function isExactPublicPostUrl(rawUrl: string): boolean {
 
   if (blockedSourceHosts.some((blocked) => host.includes(blocked))) return false;
   if (["/", "", "/feed", "/home", "/search", "/maps", "/local"].includes(path)) return false;
-  if (path.includes("/search") || path.includes("/feed") || path.includes("/category/")) return false;
+  if (path.includes("/search") || path.includes("/feed") || path.includes("/category/") || path.includes("/blog/") || path.includes("/blogs/") || path.includes("/article/") || path.includes("/articles/") || path.includes("/news/")) return false;
   if (host.includes("facebook.com") || host.includes("fb.com")) {
     return path.includes("/posts/") || path.includes("/permalink/") || path.includes("/groups/") && /\/posts\/\d+/.test(path);
   }
@@ -136,6 +156,9 @@ function isExactPublicPostUrl(rawUrl: string): boolean {
   }
   if (host.includes("craigslist.org")) return /\/d\/.+\/\d+\.html$/.test(path) || /\/\d+\.html$/.test(path);
   if (host.includes("reddit.com")) return path.includes("/comments/");
+  if (host.includes("upwork.com")) return path.includes("/jobs/") || path.includes("/freelance-jobs/apply/");
+  if (host.includes("freelancer.com")) return path.includes("/projects/");
+  if (host.includes("fiverr.com")) return false;
   return path.split("/").filter(Boolean).length >= 2;
 }
 
@@ -166,13 +189,24 @@ function validEmail(value: string): boolean {
   const email = value.trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return false;
   const domain = email.split("@")[1];
-  if (!domain || blockedEmailDomains.has(domain)) return false;
-  if (/^(test|fake|sample|demo|no-reply|noreply|admin)@/.test(email)) return false;
+  if (!domain || blockedEmailDomains.has(domain) || platformEmailDomains.has(domain)) return false;
+  if (/^(test|fake|sample|demo|no-reply|noreply|admin|support|info|hello|sales|contact|privacy|legal|press|media|careers?|jobs?)@/.test(email)) return false;
   return true;
 }
 
+function contactEvidence(text: string): string {
+  const windows: string[] = [];
+  for (const pattern of buyerIntentPatterns) {
+    pattern.lastIndex = 0;
+    const match = pattern.exec(text);
+    if (!match || match.index == null) continue;
+    windows.push(text.slice(Math.max(0, match.index - 500), match.index + 1800));
+  }
+  return windows.join("\n");
+}
+
 function extractEmails(text: string): string[] {
-  const matches = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? [];
+  const matches = contactEvidence(text).match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? [];
   return [...new Set(matches.map((e) => e.toLowerCase()).filter(validEmail))].slice(0, 2);
 }
 
@@ -194,7 +228,7 @@ function formatPhone(value: string): string {
 }
 
 function extractPhones(text: string): string[] {
-  const matches = text.match(/(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}/g) ?? [];
+  const matches = contactEvidence(text).match(/(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}/g) ?? [];
   return [...new Set(matches.filter(validPhone).map(formatPhone))].slice(0, 2);
 }
 
@@ -253,8 +287,10 @@ function hasBuyerRequestEvidence(text: string, body: Body): boolean {
   const providerScore = countMatches(primaryContent, providerOfferPatterns);
   const title = normalized.split("\n")[0] ?? "";
   const titleLooksLikeProvider = directoryOrProviderTitlePatterns.some((pattern) => pattern.test(title));
+  const editorialScore = countMatches(primaryContent, editorialPatterns);
 
   if (buyerScore < 1) return false;
+  if (editorialScore > 0) return false;
   if (providerScore > buyerScore + 1) return false;
   if (titleLooksLikeProvider && providerScore > 0) return false;
   return true;
@@ -366,7 +402,10 @@ function buildSearchQuery(body: Body) {
   const location = [body.city, body.state, body.country].filter(Boolean).join(" ");
   const platform = body.platform ? `${body.platform} ` : "";
   const service = leadServicePhrase(body);
-  return `${platform}("need a ${service}" OR "need ${service}" OR "looking for a ${service}" OR "looking for ${service}" OR "ISO ${service}" OR "${service} needed" OR "can anyone recommend ${service}" OR "does anyone know a ${service}") ${location} -jobs -career -careers -salary -hiring -"free estimate" -"licensed and insured" -"call us" -"our services" -"we offer" -"serving the"`.trim();
+  const sourceScope = body.platform && body.platform !== "Any"
+    ? platform
+    : "(site:reddit.com/comments OR site:craigslist.org OR site:facebook.com/groups OR site:nextdoor.com/p OR site:upwork.com/jobs OR site:freelancer.com/projects) ";
+  return `${sourceScope}("need a ${service}" OR "need ${service}" OR "looking for a ${service}" OR "looking for ${service}" OR "ISO ${service}" OR "${service} needed" OR "can anyone recommend ${service}" OR "does anyone know a ${service}") ${location} -blog -article -guide -tips -jobs -career -careers -salary -"free estimate" -"licensed and insured" -"call us" -"our services" -"we offer" -"serving the"`.trim();
 }
 
 function collectDocuments(results: unknown[], body: Body): SourceDocument[] {
@@ -390,6 +429,7 @@ function collectDocuments(results: unknown[], body: Body): SourceDocument[] {
       emails: extractEmails(evidence),
       phones: extractPhones(evidence),
     };
+    if (contacts.emails.length === 0 && contacts.phones.length === 0) continue;
 
     seen.add(rawUrl);
     docs.push({
@@ -405,36 +445,6 @@ function collectDocuments(results: unknown[], body: Body): SourceDocument[] {
   return docs;
 }
 
-function fallbackLeadFromDocument(doc: SourceDocument, body: Body) {
-  const service = doc.title || `${leadServicePhrase(body)} request`;
-  const description = doc.description || doc.markdown.split("\n").find((line) => line.trim().length > 30)?.trim() || service;
-  return sanitizeLead({
-    customer_name: "Source contact",
-    service,
-    description,
-    category: body.category ?? leadServicePhrase(body),
-    city: body.city,
-    state: body.state,
-    country: body.country,
-    source: doc.source,
-    source_url: doc.url,
-    doc_url: doc.url,
-    posted_ago_hours: null,
-    segment: body.segment === "commercial" ? "commercial" : "residential",
-    priority: doc.contacts.emails.length || doc.contacts.phones.length ? "good" : "medium",
-    urgency: countMatches(`${doc.title}\n${doc.description}`.toLowerCase(), [/\burgent\b/i, /\bemergency\b/i, /\basap\b/i]) ? "high" : "medium",
-    estimated_value_low: null,
-    estimated_value_high: null,
-    recommended_sale_price: doc.contacts.emails.length || doc.contacts.phones.length ? 25 : 10,
-    ai_score: doc.contacts.emails.length || doc.contacts.phones.length ? 78 : 68,
-    ai_confidence: doc.markdown.length > 0 ? 76 : 62,
-    suggested_reply: "Hi, I saw your service request and can connect you with a vetted local pro. What time works best to discuss the job details?",
-    reasoning: "Buyer intent was visible in the public source title or description.",
-    customer_email: doc.contacts.emails[0] ?? null,
-    customer_phone: doc.contacts.phones[0] ?? null,
-  }, doc, body);
-}
-
 function sanitizeLead(lead: Record<string, unknown>, doc: SourceDocument, body: Body) {
   const sourceUrl = normalizeUrl(doc.url);
   if (!sourceUrl || !isExactPublicPostUrl(sourceUrl)) return null;
@@ -446,6 +456,7 @@ function sanitizeLead(lead: Record<string, unknown>, doc: SourceDocument, body: 
   const phone = typeof lead.customer_phone === "string" && doc.contacts.phones.includes(formatPhone(lead.customer_phone))
     ? formatPhone(lead.customer_phone)
     : doc.contacts.phones[0] ?? null;
+  if (!email && !phone) return null;
 
   return {
     customer_name: typeof lead.customer_name === "string" && lead.customer_name.trim() ? lead.customer_name.trim() : "Source contact",
@@ -513,7 +524,7 @@ Deno.serve(async (req) => {
       return jsonResponse({
         leads: [],
         filters: body,
-        message: "No buyer-request source posts were found. Provider ads and seller posts were filtered out.",
+        message: "No verified buyer requests with public contact details were found. Blogs, provider ads, profiles without matching request evidence, and unverifiable contacts were excluded.",
       });
     }
 
@@ -611,11 +622,13 @@ Return ONLY JSON.`;
       .filter(Boolean)
       .slice(0, limit);
 
-    const finalLeads = leads.length > 0
-      ? leads
-      : documents.map((doc) => fallbackLeadFromDocument(doc, body)).filter(Boolean).slice(0, limit);
-
-    return jsonResponse({ leads: finalLeads, filters: body });
+    return jsonResponse({
+      leads,
+      filters: body,
+      message: leads.length === 0
+        ? "No verified buyer requests with same-page public contact details were found. Try a specific service and location."
+        : undefined,
+    });
   } catch (err) {
     console.error("ai-hunt-leads error", err);
     const message = (err as Error).message;
