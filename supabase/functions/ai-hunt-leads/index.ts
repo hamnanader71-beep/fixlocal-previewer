@@ -473,45 +473,6 @@ function collectDocuments(results: unknown[], body: Body): SourceDocument[] {
   return docs;
 }
 
-function sanitizeLead(lead: Record<string, unknown>, doc: SourceDocument, body: Body) {
-  const sourceUrl = normalizeUrl(doc.url);
-  if (!sourceUrl || !isExactPublicPostUrl(sourceUrl)) return null;
-  const evidence = `${doc.title}\n${doc.description}\n${doc.markdown}`;
-  if (!hasBuyerRequestEvidence(evidence, body)) return null;
-  const email = typeof lead.customer_email === "string" && doc.contacts.emails.includes(lead.customer_email.toLowerCase())
-    ? lead.customer_email.toLowerCase()
-    : doc.contacts.emails[0] ?? null;
-  const phone = typeof lead.customer_phone === "string" && doc.contacts.phones.includes(formatPhone(lead.customer_phone))
-    ? formatPhone(lead.customer_phone)
-    : doc.contacts.phones[0] ?? null;
-  return {
-    customer_name: typeof lead.customer_name === "string" && lead.customer_name.trim() ? lead.customer_name.trim() : "Source contact",
-    service: typeof lead.service === "string" && lead.service.trim() ? lead.service.trim() : doc.title || body.keyword,
-    description: typeof lead.description === "string" && lead.description.trim() ? lead.description.trim() : doc.description || doc.title,
-    category: typeof lead.category === "string" ? lead.category : body.category ?? body.keyword,
-    city: typeof lead.city === "string" ? lead.city : body.city,
-    state: typeof lead.state === "string" ? lead.state : body.state,
-    country: typeof lead.country === "string" ? lead.country : body.country,
-    source: doc.source,
-    source_url: sourceUrl,
-    source_verified: true,
-    contact_verified: Boolean(email || phone),
-    customer_email: email,
-    customer_phone: phone,
-    posted_ago_hours: typeof lead.posted_ago_hours === "number" ? lead.posted_ago_hours : null,
-    segment: lead.segment === "commercial" ? "commercial" : "residential",
-    priority: ["hot", "good", "medium", "low"].includes(String(lead.priority)) ? lead.priority : "medium",
-    urgency: ["high", "medium", "low"].includes(String(lead.urgency)) ? lead.urgency : "medium",
-    estimated_value_low: typeof lead.estimated_value_low === "number" ? lead.estimated_value_low : null,
-    estimated_value_high: typeof lead.estimated_value_high === "number" ? lead.estimated_value_high : null,
-    recommended_sale_price: typeof lead.recommended_sale_price === "number" ? lead.recommended_sale_price : null,
-    ai_score: typeof lead.ai_score === "number" ? lead.ai_score : 60,
-    ai_confidence: typeof lead.ai_confidence === "number" ? Math.min(lead.ai_confidence, 85) : 70,
-    suggested_reply: typeof lead.suggested_reply === "string" ? lead.suggested_reply : null,
-    reasoning: typeof lead.reasoning === "string" ? lead.reasoning : "Verified from a crawlable public source page.",
-  };
-}
-
 function leadFromDocument(doc: SourceDocument, body: Body) {
   const email = doc.contacts.emails[0] ?? null;
   const phone = doc.contacts.phones[0] ?? null;
@@ -553,8 +514,6 @@ Deno.serve(async (req) => {
     }
     const body: Body = parsedBody.data;
     const firecrawlAuth = getFirecrawlAuth();
-    const apiKey = Deno.env.get("LOVABLE_API_KEY")?.trim();
-    if (!apiKey) throw new Error("LOVABLE_API_KEY not configured");
 
     const credits = await firecrawlCreditStatus(firecrawlAuth);
     if (body.action === "credit_status") {
