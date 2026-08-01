@@ -116,16 +116,28 @@ export default function LeadHunterPage() {
         return text || error.message;
       }
     }
+    if (error instanceof Error && /failed to (send|fetch)|load failed|functionsfetcherror/i.test(error.message)) {
+      return "The lead service was temporarily unreachable. Please retry.";
+    }
     return error instanceof Error ? error.message : "Lead hunt failed";
+  }
+
+  async function invokeLeadHunter(body: Record<string, unknown>, attempts = 2) {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const response = await supabase.functions.invoke("ai-hunt-leads", { body });
+      if (!response.error) return response.data;
+      lastError = response.error;
+      if (response.error instanceof FunctionsHttpError) break;
+      if (attempt + 1 < attempts) await new Promise((resolve) => window.setTimeout(resolve, 700));
+    }
+    throw lastError;
   }
 
   async function checkCreditStatus(silent = false) {
     if (!silent) setCheckingCredits(true);
     try {
-      const { data, error } = await supabase.functions.invoke("ai-hunt-leads", {
-        body: { action: "credit_status", keyword: "status" },
-      });
-      if (error) throw error;
+      const data = await invokeLeadHunter({ action: "credit_status", keyword: "status" }, 3);
       const credits = (data?.credits ?? null) as CreditStatus | null;
       setCreditStatus(credits);
       const message = typeof data?.message === "string" ? data.message : null;
@@ -134,7 +146,7 @@ export default function LeadHunterPage() {
     } catch (err) {
       const message = await readFunctionError(err);
       if (!silent) toast.error(message);
-      setHuntMessage(message);
+      if (!silent) setHuntMessage(message);
     } finally {
       setCheckingCredits(false);
     }
@@ -143,6 +155,11 @@ export default function LeadHunterPage() {
   async function hunt(e?: React.FormEvent) {
     e?.preventDefault();
     if (!f.keyword.trim()) { toast.error("Enter a keyword to hunt for."); return; }
+    const postedWithinDays = f.posted_within_days ? Number(f.posted_within_days) : undefined;
+    if (postedWithinDays != null && (!Number.isInteger(postedWithinDays) || postedWithinDays < 1 || postedWithinDays > 365)) {
+      toast.error("Posted within must be between 1 and 365 days.");
+      return;
+    }
     if (creditStatus?.exhausted) {
       const message = "Lead source credits are exhausted. Hunting is paused until the connected Firecrawl account is topped up or upgraded.";
       setHuntMessage(message);
@@ -153,8 +170,7 @@ export default function LeadHunterPage() {
     setResults([]);
     setHuntMessage(null);
     try {
-      const { data, error } = await supabase.functions.invoke("ai-hunt-leads", {
-        body: {
+      const data = await invokeLeadHunter({
           keyword: f.keyword.trim(),
           category: f.category || undefined,
           city: f.city || undefined,
@@ -164,13 +180,11 @@ export default function LeadHunterPage() {
           platform: f.platform !== "Any" ? f.platform : undefined,
           budget_min: f.budget_min ? Number(f.budget_min) : undefined,
           budget_max: f.budget_max ? Number(f.budget_max) : undefined,
-          posted_within_days: f.posted_within_days ? Number(f.posted_within_days) : undefined,
+          posted_within_days: postedWithinDays,
           segment: f.segment,
           priority: f.priority === "urgent" ? "urgent" : f.priority === "normal" ? "normal" : "any",
           limit: Number(f.limit),
-        },
       });
-      if (error) throw error;
       const leads = (data?.leads ?? []) as HuntedLead[];
       setResults(leads);
       setHuntMessage(typeof data?.message === "string" ? data.message : null);
@@ -332,7 +346,7 @@ export default function LeadHunterPage() {
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">Posted within (days)</Label>
-                <Input type="number" value={f.posted_within_days} onChange={(e) => up("posted_within_days", e.target.value)} className="h-9" />
+                <Input type="number" min="1" max="365" value={f.posted_within_days} onChange={(e) => up("posted_within_days", e.target.value)} className="h-9" />
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">Segment</Label>
