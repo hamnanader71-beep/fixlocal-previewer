@@ -416,7 +416,7 @@ async function firecrawlCreditStatus(auth: FirecrawlAuth): Promise<FirecrawlCred
 function buildSearchQueries(body: Body) {
   const location = [body.city, body.state, body.country].filter(Boolean).join(" ");
   const service = leadServicePhrase(body);
-  const intent = `("need ${service}" OR "need a ${service}" OR "looking for ${service}" OR "looking for a ${service}" OR "${service} needed" OR "recommend a ${service}" OR "hire ${service}" OR "help with ${service}")`;
+  const intent = `${service} (need OR needed OR looking OR recommend OR hire OR help OR quote OR estimate OR repair)`;
   const exclusions = `-blog -article -guide -tips -career -careers -salary -"free estimate" -"licensed and insured" -"call us" -"our services" -"we offer" -"serving the"`;
   const platformSites: Record<string, string> = {
     Reddit: "site:reddit.com/comments",
@@ -432,7 +432,10 @@ function buildSearchQueries(body: Body) {
     ? [selectedSite]
     : ["site:reddit.com/comments", "site:craigslist.org", "site:upwork.com/jobs", "site:freelancer.com/projects", "site:facebook.com/groups", "site:nextdoor.com"];
 
-  return sites.map((site) => `${site} ${intent} ${location} ${exclusions}`.trim());
+  return sites.map((site, index) => {
+    const searchLocation = index < 4 ? location : [body.state, body.country].filter(Boolean).join(" ");
+    return `${site} ${intent} ${searchLocation} ${exclusions}`.trim();
+  });
 }
 
 function collectDocuments(results: unknown[], body: Body): SourceDocument[] {
@@ -576,6 +579,11 @@ Deno.serve(async (req) => {
     );
     const searchRows = searchBatches.flat();
     const documents = collectDocuments(searchRows, body).slice(0, limit);
+    console.log("lead hunt discovery", {
+      keyword: body.keyword,
+      searchRows: searchRows.length,
+      verifiedBuyerDocuments: documents.length,
+    });
 
     if (documents.length === 0) {
       return jsonResponse({
