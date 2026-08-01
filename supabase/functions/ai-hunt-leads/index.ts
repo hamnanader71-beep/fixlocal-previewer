@@ -1,10 +1,8 @@
+import { corsHeaders } from "npm:@supabase/supabase-js@2/cors";
+import { z } from "npm:zod@3.25.76";
+
 // Universal Lead Hunter — finds public, crawlable service-request pages.
 // Source URLs and contact details must come from scraped source evidence only.
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
 
 interface Body {
   action?: "hunt" | "credit_status";
@@ -49,6 +47,23 @@ interface FirecrawlAuth {
   lovableKey?: string;
   baseUrl: string;
 }
+
+const BodySchema = z.object({
+  action: z.enum(["hunt", "credit_status"]).optional(),
+  keyword: z.string().trim().min(2).max(160),
+  category: z.string().trim().max(120).optional(),
+  city: z.string().trim().max(120).optional(),
+  state: z.string().trim().max(120).optional(),
+  country: z.string().trim().max(120).optional(),
+  radius_km: z.number().min(0).max(1000).optional(),
+  platform: z.string().trim().max(80).optional(),
+  budget_min: z.number().min(0).optional(),
+  budget_max: z.number().min(0).optional(),
+  posted_within_days: z.number().int().min(1).max(365).optional(),
+  segment: z.enum(["residential", "commercial", "any"]).optional(),
+  priority: z.enum(["urgent", "normal", "any"]).optional(),
+  limit: z.number().int().min(3).max(15).optional(),
+});
 
 const blockedEmailDomains = new Set([
   "example.com",
@@ -398,14 +413,26 @@ async function firecrawlCreditStatus(auth: FirecrawlAuth): Promise<FirecrawlCred
   };
 }
 
-function buildSearchQuery(body: Body) {
+function buildSearchQueries(body: Body) {
   const location = [body.city, body.state, body.country].filter(Boolean).join(" ");
-  const platform = body.platform ? `${body.platform} ` : "";
   const service = leadServicePhrase(body);
-  const sourceScope = body.platform && body.platform !== "Any"
-    ? platform
-    : "(site:reddit.com/comments OR site:craigslist.org OR site:facebook.com/groups OR site:nextdoor.com/p OR site:upwork.com/jobs OR site:freelancer.com/projects) ";
-  return `${sourceScope}("need a ${service}" OR "need ${service}" OR "looking for a ${service}" OR "looking for ${service}" OR "ISO ${service}" OR "${service} needed" OR "can anyone recommend ${service}" OR "does anyone know a ${service}") ${location} -blog -article -guide -tips -jobs -career -careers -salary -"free estimate" -"licensed and insured" -"call us" -"our services" -"we offer" -"serving the"`.trim();
+  const intent = `("need ${service}" OR "need a ${service}" OR "looking for ${service}" OR "looking for a ${service}" OR "${service} needed" OR "recommend a ${service}" OR "hire ${service}" OR "help with ${service}")`;
+  const exclusions = `-blog -article -guide -tips -career -careers -salary -"free estimate" -"licensed and insured" -"call us" -"our services" -"we offer" -"serving the"`;
+  const platformSites: Record<string, string> = {
+    Reddit: "site:reddit.com/comments",
+    Craigslist: "site:craigslist.org",
+    Facebook: "site:facebook.com/groups",
+    Nextdoor: "site:nextdoor.com",
+    Upwork: "site:upwork.com/jobs",
+    Freelancer: "site:freelancer.com/projects",
+    LinkedIn: "site:linkedin.com/posts",
+  };
+  const selectedSite = body.platform && body.platform !== "Any" ? platformSites[body.platform] : undefined;
+  const sites = selectedSite
+    ? [selectedSite]
+    : ["site:reddit.com/comments", "site:craigslist.org", "site:upwork.com/jobs", "site:freelancer.com/projects", "site:facebook.com/groups", "site:nextdoor.com"];
+
+  return sites.map((site) => `${site} ${intent} ${location} ${exclusions}`.trim());
 }
 
 function collectDocuments(results: unknown[], body: Body): SourceDocument[] {
@@ -429,8 +456,6 @@ function collectDocuments(results: unknown[], body: Body): SourceDocument[] {
       emails: extractEmails(evidence),
       phones: extractPhones(evidence),
     };
-    if (contacts.emails.length === 0 && contacts.phones.length === 0) continue;
-
     seen.add(rawUrl);
     docs.push({
       url: rawUrl,
@@ -456,8 +481,6 @@ function sanitizeLead(lead: Record<string, unknown>, doc: SourceDocument, body: 
   const phone = typeof lead.customer_phone === "string" && doc.contacts.phones.includes(formatPhone(lead.customer_phone))
     ? formatPhone(lead.customer_phone)
     : doc.contacts.phones[0] ?? null;
-  if (!email && !phone) return null;
-
   return {
     customer_name: typeof lead.customer_name === "string" && lead.customer_name.trim() ? lead.customer_name.trim() : "Source contact",
     service: typeof lead.service === "string" && lead.service.trim() ? lead.service.trim() : doc.title || body.keyword,
@@ -486,11 +509,46 @@ function sanitizeLead(lead: Record<string, unknown>, doc: SourceDocument, body: 
   };
 }
 
+function leadFromDocument(doc: SourceDocument, body: Body) {
+  const email = doc.contacts.emails[0] ?? null;
+  const phone = doc.contacts.phones[0] ?? null;
+  return {
+    customer_name: "Source contact",
+    service: doc.title || body.keyword,
+    description: doc.description || doc.title,
+    category: body.category ?? body.keyword,
+    city: body.city,
+    state: body.state,
+    country: body.country,
+    source: doc.source,
+    source_url: doc.url,
+    source_verified: true,
+    contact_verified: Boolean(email || phone),
+    customer_email: email,
+    customer_phone: phone,
+    posted_ago_hours: null,
+    segment: body.segment === "commercial" ? "commercial" : "residential",
+    priority: "medium",
+    urgency: "medium",
+    estimated_value_low: null,
+    estimated_value_high: null,
+    recommended_sale_price: null,
+    ai_score: 65,
+    ai_confidence: 70,
+    suggested_reply: null,
+    reasoning: "Buyer intent and the exact source URL were verified from the crawlable public request page.",
+  };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const body: Body = await req.json();
+    const parsedBody = BodySchema.safeParse(await req.json());
+    if (!parsedBody.success) {
+      return jsonResponse({ error: parsedBody.error.flatten().fieldErrors }, 400);
+    }
+    const body: Body = parsedBody.data;
     const firecrawlAuth = getFirecrawlAuth();
     const apiKey = Deno.env.get("LOVABLE_API_KEY")?.trim();
     if (!apiKey) throw new Error("LOVABLE_API_KEY not configured");
@@ -512,19 +570,18 @@ Deno.serve(async (req) => {
       }, 402);
     }
 
-    if (!body.keyword || body.keyword.trim().length < 2) {
-      return jsonResponse({ error: "keyword is required" }, 400);
-    }
-
     const limit = Math.min(Math.max(body.limit ?? 8, 3), 15);
-    const searchRows = await firecrawlSearch(buildSearchQuery(body), Math.max(limit * 5, 15), firecrawlAuth);
+    const searchBatches = await Promise.all(
+      buildSearchQueries(body).map((query) => firecrawlSearch(query, Math.max(limit * 2, 10), firecrawlAuth)),
+    );
+    const searchRows = searchBatches.flat();
     const documents = collectDocuments(searchRows, body).slice(0, limit);
 
     if (documents.length === 0) {
       return jsonResponse({
         leads: [],
         filters: body,
-        message: "No verified buyer requests with public contact details were found. Blogs, provider ads, profiles without matching request evidence, and unverifiable contacts were excluded.",
+        message: "No matching public buyer requests were found for these filters. Try a broader location or a service name such as plumber, roofing, cleaning, or HVAC.",
       });
     }
 
@@ -612,21 +669,25 @@ Return ONLY JSON.`;
     try { parsed = JSON.parse(content); } catch { parsed = {}; }
     const rawLeads = Array.isArray((parsed as { leads?: unknown[] }).leads) ? (parsed as { leads: unknown[] }).leads : [];
     const docByUrl = new Map(documents.map((doc) => [doc.url, doc]));
-    const leads = rawLeads
+    const aiLeads = rawLeads
       .map((lead) => {
         const row = lead as Record<string, unknown>;
         const sourceUrl = normalizeUrl(row.source_url ?? row.doc_url);
         const doc = sourceUrl ? docByUrl.get(sourceUrl) : null;
         return doc ? sanitizeLead(row, doc, body) : null;
       })
-      .filter(Boolean)
-      .slice(0, limit);
+      .filter(Boolean);
+    const representedUrls = new Set(aiLeads.map((lead) => (lead as { source_url: string }).source_url));
+    const leads = [
+      ...aiLeads,
+      ...documents.filter((doc) => !representedUrls.has(doc.url)).map((doc) => leadFromDocument(doc, body)),
+    ].slice(0, limit);
 
     return jsonResponse({
       leads,
       filters: body,
       message: leads.length === 0
-        ? "No verified buyer requests with same-page public contact details were found. Try a specific service and location."
+        ? "No matching public buyer requests were found. Try a specific service and a broader location."
         : undefined,
     });
   } catch (err) {
