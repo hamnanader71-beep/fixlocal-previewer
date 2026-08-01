@@ -364,13 +364,14 @@ function firecrawlErrorMessage(status: number, details: string, context: "credit
   return `Firecrawl ${context} failed [${status}]: ${details}`;
 }
 
-async function firecrawlSearch(query: string, limit: number, auth: FirecrawlAuth) {
+async function firecrawlSearch(query: string, limit: number, auth: FirecrawlAuth, postedWithinDays?: number) {
   const response = await fetch(`${auth.baseUrl}/search`, {
     method: "POST",
     headers: firecrawlHeaders(auth, true),
     body: JSON.stringify({
       query,
       limit,
+      tbs: postedWithinDays ? `qdr:${postedWithinDays <= 1 ? "d" : postedWithinDays <= 7 ? "w" : postedWithinDays <= 31 ? "m" : "y"}` : undefined,
       scrapeOptions: { formats: ["markdown"], onlyMainContent: true },
     }),
   });
@@ -416,7 +417,8 @@ async function firecrawlCreditStatus(auth: FirecrawlAuth): Promise<FirecrawlCred
 function buildSearchQueries(body: Body) {
   const location = [body.city, body.state, body.country].filter(Boolean).join(" ");
   const service = leadServicePhrase(body);
-  const intent = `${service} (need OR needed OR looking OR recommend OR hire OR help OR quote OR estimate OR repair)`;
+  const intent = `${service} (need OR needed OR "looking for" OR recommend OR hire OR help OR quote OR estimate OR repair)`;
+  const contactIntent = `(call OR text OR email OR contact OR phone)`;
   const exclusions = `-blog -article -guide -tips -career -careers -salary -"free estimate" -"licensed and insured" -"call us" -"our services" -"we offer" -"serving the"`;
   const platformSites: Record<string, string> = {
     Reddit: "site:reddit.com/comments",
@@ -434,7 +436,7 @@ function buildSearchQueries(body: Body) {
 
   return sites.map((site, index) => {
     const searchLocation = index < 4 ? location : [body.state, body.country].filter(Boolean).join(" ");
-    return `${site} ${intent} ${searchLocation} ${exclusions}`.trim();
+    return `${site} ${intent} ${contactIntent} ${searchLocation} ${exclusions}`.trim();
   });
 }
 
@@ -515,8 +517,8 @@ Deno.serve(async (req) => {
     const body: Body = parsedBody.data;
     const firecrawlAuth = getFirecrawlAuth();
 
-    const credits = await firecrawlCreditStatus(firecrawlAuth);
     if (body.action === "credit_status") {
+      const credits = await firecrawlCreditStatus(firecrawlAuth);
       return jsonResponse({
         credits,
         message: credits.exhausted
@@ -525,16 +527,9 @@ Deno.serve(async (req) => {
       });
     }
 
-    if (credits.exhausted) {
-      return jsonResponse({
-        error: "Lead source credits are exhausted. Hunting is paused until the connected Firecrawl account is topped up or upgraded.",
-        credits,
-      }, 402);
-    }
-
     const limit = Math.min(Math.max(body.limit ?? 8, 3), 15);
     const searchBatches = await Promise.all(
-      buildSearchQueries(body).map((query) => firecrawlSearch(query, Math.max(limit * 2, 10), firecrawlAuth)),
+      buildSearchQueries(body).map((query) => firecrawlSearch(query, Math.max(limit * 2, 10), firecrawlAuth, body.posted_within_days)),
     );
     const searchRows = searchBatches.flat();
     const documents = collectDocuments(searchRows, body).slice(0, limit);
